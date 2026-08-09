@@ -4737,14 +4737,33 @@ built once, here, rather than recomputed ad hoc by each consumer.
 
 **Interfaces:**
 - Consumes: `car.market_adjusted_car/bhar`, `car.four_factor_car/bhar`,
-  `car.size_industry_matched_car/bhar` (Tasks 14-16).
+  `car.size_industry_matched_car/bhar` (Tasks 14-16),
+  `sample.industry.ff12_industry` (Task 7).
 - Produces: `attach.attach_car_bhar(sample: pl.DataFrame, prices:
   pl.DataFrame, factors: pl.DataFrame, sic: pl.DataFrame, event_date_col:
-  str = "transaction_date") -> pl.DataFrame` (returns `sample` with 18 new
-  columns: `{car,bhar}_{market,four_factor,size_industry}_{30,90,180}` —
-  `event_date_col` defaults to `"transaction_date"` per the Global
-  Constraints note above; the one place this project calls
-  `event_date_col="report_date"` is Robustness item 6, Task 23).
+  str = "transaction_date") -> pl.DataFrame` (returns `sample` with 20 new
+  columns: the 18 CAR/BHAR variants
+  `{car,bhar}_{market,four_factor,size_industry}_{30,90,180}`, plus
+  `industry: Utf8` and `prior_12mo_return: Float64` — `event_date_col`
+  defaults to `"transaction_date"` per the Global Constraints note above;
+  the one place this project calls `event_date_col="report_date"` is
+  Robustness item 6, Task 23).
+
+**Why `industry` and `prior_12mo_return` are added here (discovered
+during Task 19's review, patched into the plan before Task 22 was
+built):** Model 2 (Task 19) reads both of these columns from its input
+frame via `row.get(...)`, but no task in this plan actually produces
+either of them as a persistent column on the sample — `industry`-like
+values exist only as throwaway local variables inside Tasks 9/13/16
+(`_sector`/`sector`, each scoped to that task's own function and never
+attached to the sample itself), and `prior_12mo_return` has no producer
+anywhere. Silently defaulting (as Task 19's original code did,
+`row.get("industry", "Other")`) collapses every ticker's real sector to
+one value, which — combined with a fixed-effects regression that absorbs
+single-level dimensions — either produces a meaningless regression or
+raises a `ValueError`, either way hiding the real cause. This task is the
+natural place to compute both: it already loops over every sample row
+once and already has `sic`/`prices` in hand.
 
 **Known performance note (do not silently over-engineer around it now):**
 this iterates row-by-row calling Phase 4's functions, each of which
@@ -4810,6 +4829,64 @@ def test_attach_car_bhar_adds_all_18_columns_and_uses_transaction_date_by_defaul
     # AAPL rises every session, so the market-adjusted CAR (which nets out
     # SPY's exactly-flat price) must be positive.
     assert out["car_market_30"][0] > 0
+    # SIC 3571 (Electronic Computers) is Business Equipment in FF12.
+    assert out["industry"][0] == "Business Equipment"
+    # AAPL grows 0.1%/session; ~252 sessions before day 200 is day -52 (out
+    # of the fixture's range), so this specific case has no valid trailing
+    # 12-month window and prior_12mo_return must be None, not a wrong value
+    # computed from a truncated window -- the fixture is deliberately too
+    # short to have real 12mo history, exercising the "not enough data"
+    # path, not the happy path (a second test below covers the happy path).
+    assert out["prior_12mo_return"][0] is None
+
+
+def test_attach_car_bhar_computes_prior_12mo_return_when_enough_history_exists():
+    sessions = [date(2019, 1, 1) + timedelta(days=i) for i in range(500)]
+    price_rows = []
+    price = 100.0
+    for i, d in enumerate(sessions):
+        if i > 0:
+            price *= 1.001
+        price_rows.append({"ticker": "AAPL", "date": d, "open": 1.0, "high": 1.0, "low": 1.0, "close": price, "volume": 1000.0, "close_adj": price})
+        price_rows.append({"ticker": "SPY", "date": d, "open": 1.0, "high": 1.0, "low": 1.0, "close": 100.0, "volume": 1000.0, "close_adj": 100.0})
+    prices = pl.DataFrame(price_rows, schema=PRICE_SCHEMA)
+    factors = pl.DataFrame(schema=FACTOR_SCHEMA)
+    sic = pl.DataFrame({"ticker": ["AAPL"], "cik": [320193], "sic_code": ["3571"], "sic_description": ["x"]}, schema=SIC_SCHEMA)
+    # event at session index 400 -- 252 sessions of real prior history exist (indices 148..400).
+    sample = pl.DataFrame(
+        {
+            "ticker": ["AAPL"], "bioguide_id": ["A1"], "transaction": ["Sale"],
+            "transaction_date": [sessions[400]], "report_date": [sessions[410]],
+        },
+        schema=SAMPLE_SCHEMA,
+    )
+    out = attach.attach_car_bhar(sample, prices, factors, sic)
+    assert out["prior_12mo_return"][0] is not None
+    # 0.1%/session compounded over exactly 252 sessions: (1.001**252 - 1).
+    assert out["prior_12mo_return"][0] == pytest.approx(1.001 ** 252 - 1, abs=1e-6)
+
+
+def test_attach_car_bhar_industry_is_other_for_unknown_sic():
+    sessions = [date(2020, 1, 1) + timedelta(days=i) for i in range(10)]
+    price_rows = [
+        {"ticker": "ZZZ", "date": d, "open": 1.0, "high": 1.0, "low": 1.0, "close": 1.0, "volume": 1.0, "close_adj": 1.0}
+        for d in sessions
+    ] + [
+        {"ticker": "SPY", "date": d, "open": 1.0, "high": 1.0, "low": 1.0, "close": 1.0, "volume": 1.0, "close_adj": 1.0}
+        for d in sessions
+    ]
+    prices = pl.DataFrame(price_rows, schema=PRICE_SCHEMA)
+    factors = pl.DataFrame(schema=FACTOR_SCHEMA)
+    sic = pl.DataFrame(schema=SIC_SCHEMA)  # ZZZ has no SIC entry at all
+    sample = pl.DataFrame(
+        {
+            "ticker": ["ZZZ"], "bioguide_id": ["A1"], "transaction": ["Sale"],
+            "transaction_date": [sessions[5]], "report_date": [sessions[5]],
+        },
+        schema=SAMPLE_SCHEMA,
+    )
+    out = attach.attach_car_bhar(sample, prices, factors, sic)
+    assert out["industry"][0] == "Other"
 
 
 def test_attach_car_bhar_report_date_variant_uses_report_date_as_event_date():
@@ -4846,24 +4923,59 @@ Expected: FAIL with `ModuleNotFoundError`
 
 ```python
 """Attaches every CAR/BHAR variant (3 horizons x 3 methods, both metrics)
-to each sample row. event_date_col defaults to "transaction_date" -- see
-PRE_ANALYSIS_PLAN.md Section 6's primary specification and the Global
-Constraints note on why this differs from every point-in-time-gated
-filter elsewhere in this codebase."""
+to each sample row, plus two Model 2 (Task 19) control columns that have
+no other producer in this codebase: industry (FF12, via SIC) and
+prior_12mo_return (trailing ~252-session return). event_date_col defaults
+to "transaction_date" -- see PRE_ANALYSIS_PLAN.md Section 6's primary
+specification and the Global Constraints note on why this differs from
+every point-in-time-gated filter elsewhere in this codebase."""
 
 from __future__ import annotations
 
+from bisect import bisect_right
+from datetime import date
+
 import polars as pl
 
+from ..calendar import offset_within_days
+from ..sample.industry import ff12_industry
 from . import car
 
 HORIZONS = (30, 90, 180)
+
+
+def _anchor_session(sessions: list[date], d: date) -> date | None:
+    """Most recent known session at or before d -- deliberately NOT
+    offset_within_days(sessions, d, 0), whose n=0 behavior from a
+    non-session date is a documented edge case (anchors to the session
+    immediately BEFORE the first known session on/after d, not to the
+    session at-or-before d itself). This is a plain as-of lookup."""
+    i = bisect_right(sessions, d)
+    if i == 0:
+        return None
+    return sessions[i - 1]
+
+
+def _prior_12mo_return(ticker: str, event_date: date, prices: pl.DataFrame, sessions: list[date], lookback: int = 252) -> float | None:
+    anchor = _anchor_session(sessions, event_date)
+    if anchor is None:
+        return None
+    start = offset_within_days(sessions, anchor, -lookback)
+    if start is None:
+        return None
+    p0 = car._price_on(ticker, start, prices)
+    p1 = car._price_on(ticker, anchor, prices)
+    if p0 is None or p1 is None or p0 == 0:
+        return None
+    return (p1 - p0) / p0
 
 
 def attach_car_bhar(
     sample: pl.DataFrame, prices: pl.DataFrame, factors: pl.DataFrame, sic: pl.DataFrame,
     event_date_col: str = "transaction_date",
 ) -> pl.DataFrame:
+    sic_lookup = dict(zip(sic["ticker"].to_list(), sic["sic_code"].to_list()))
+    sessions = car.sessions_from_prices(prices)
     out_rows = []
     for row in sample.iter_rows(named=True):
         ticker, event_date = row["ticker"], row[event_date_col]
@@ -4875,14 +4987,22 @@ def attach_car_bhar(
             result[f"bhar_four_factor_{h}"] = car.four_factor_bhar(ticker, event_date, h, prices, factors)
             result[f"car_size_industry_{h}"] = car.size_industry_matched_car(ticker, event_date, h, prices, sic)
             result[f"bhar_size_industry_{h}"] = car.size_industry_matched_bhar(ticker, event_date, h, prices, sic)
+        result["industry"] = ff12_industry(sic_lookup.get(ticker))
+        result["prior_12mo_return"] = _prior_12mo_return(ticker, event_date, prices, sessions)
         out_rows.append(result)
     return pl.DataFrame(out_rows)
 ```
 
+`car._price_on` is a "private" (underscore-prefixed) module function, not part of
+`events/car.py`'s public interface -- reaching into it from a sibling module in
+the same package is acceptable here (avoids duplicating the exact-date price
+lookup a third time), but if a future refactor renames or removes it, this is
+the one external call site to update.
+
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `uv run pytest tests/events/test_attach.py -v`
-Expected: `2 passed`
+Expected: `4 passed`
 
 - [ ] **Step 5: Commit**
 
