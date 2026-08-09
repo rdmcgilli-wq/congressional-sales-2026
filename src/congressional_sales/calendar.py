@@ -13,12 +13,10 @@ from __future__ import annotations
 
 from bisect import bisect_left
 from datetime import date
-from functools import lru_cache
 
 from . import storage
 
 
-@lru_cache(maxsize=8)
 def trading_days(anchor_ticker: str = "SPY") -> list[date]:
     df = storage.read("equity_eod")
     if df.is_empty():

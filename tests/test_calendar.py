@@ -61,3 +61,36 @@ def test_is_trading_day():
     _seed_spy([date(2024, 1, 4), date(2024, 1, 5)])
     assert calendar.is_trading_day(date(2024, 1, 4)) is True
     assert calendar.is_trading_day(date(2024, 1, 6)) is False
+
+
+def test_trading_days_reflects_the_current_warehouse_not_a_stale_cache(monkeypatch, tmp_path):
+    """Regression: trading_days() previously carried an @lru_cache keyed
+    only on anchor_ticker, with no invalidation when the underlying
+    warehouse changes. Since every test in this file shares one anchor
+    ticker ("SPY"), that cache silently served the FIRST test's data to
+    every later call in the same pytest process, regardless of what the
+    current test had just seeded -- verified by hand-tracing actual
+    pytest execution: 5 of the other 6 tests in this file were passing
+    only because their fixture happened to agree with an earlier test's
+    stale cached session list at the specific indices each test's
+    assertion touched, not because they were reading their own seeded
+    data. This test writes two DIFFERENT warehouses in sequence within a
+    single test function (bypassing the autouse per-test fixture, which
+    only gives isolation BETWEEN tests, not within one) and asserts the
+    second read reflects the second warehouse, not the first."""
+    home_a = tmp_path / "wh_a"
+    monkeypatch.setenv("CONGRESS_SALES_HOME", str(home_a))
+    from congressional_sales.config import paths
+
+    paths().ensure()
+    _seed_spy([date(2024, 1, 2), date(2024, 1, 3)])
+    first = calendar.trading_days("SPY")
+    assert first == [date(2024, 1, 2), date(2024, 1, 3)]
+
+    home_b = tmp_path / "wh_b"
+    monkeypatch.setenv("CONGRESS_SALES_HOME", str(home_b))
+    paths().ensure()
+    _seed_spy([date(2024, 5, 1), date(2024, 5, 2), date(2024, 5, 3)])
+    second = calendar.trading_days("SPY")
+    assert second == [date(2024, 5, 1), date(2024, 5, 2), date(2024, 5, 3)]
+    assert second != first
