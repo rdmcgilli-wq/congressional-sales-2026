@@ -22,6 +22,7 @@ from datetime import date
 import polars as pl
 
 from ..calendar import offset_within_days
+from ..sample.industry import ff12_industry
 
 
 def sessions_from_prices(prices: pl.DataFrame, market_ticker: str = "SPY") -> list[date]:
@@ -168,3 +169,108 @@ def four_factor_bhar(ticker: str, event_date: date, horizon: int, prices: pl.Dat
         actual_growth *= 1 + (r - f["rf"][0])
         predicted_growth *= 1 + _predicted_excess(betas, f)
     return (actual_growth - 1) - (predicted_growth - 1)
+
+
+def size_proxy(ticker: str, as_of: date, prices: pl.DataFrame, sessions: list[date], lookback: int = 30) -> float | None:
+    start = offset_within_days(sessions, as_of, -lookback)
+    if start is None:
+        return None
+    window = [d for d in sessions if start <= d <= as_of]
+    rows = prices.filter((pl.col("ticker") == ticker) & pl.col("date").is_in(window))
+    if rows.is_empty():
+        return None
+    dollar_vol = (rows["close_adj"] * rows["volume"]).mean()
+    return float(dollar_vol) if dollar_vol is not None else None
+
+
+def matched_control_tickers(
+    ticker: str, event_date: date, prices: pl.DataFrame, sic: pl.DataFrame, sessions: list[date], n_deciles: int = 10
+) -> list[str]:
+    my_sic = sic.filter(pl.col("ticker") == ticker)
+    if my_sic.is_empty():
+        return []
+    my_sector = ff12_industry(my_sic["sic_code"][0])
+
+    peers = sic.filter(pl.col("ticker") != ticker)
+    peer_sectors = peers.with_columns(pl.col("sic_code").map_elements(ff12_industry, return_dtype=pl.Utf8).alias("_sector"))
+    same_sector = peer_sectors.filter(pl.col("_sector") == my_sector)["ticker"].to_list()
+    if not same_sector:
+        return []
+
+    my_size = size_proxy(ticker, event_date, prices, sessions)
+    sized_peers = [(t, size_proxy(t, event_date, prices, sessions)) for t in same_sector]
+    sized_peers = [(t, s) for t, s in sized_peers if s is not None]
+    if my_size is None or len(sized_peers) < n_deciles:
+        # Too few same-sector peers to form meaningful deciles -- fall back
+        # to the full same-sector set rather than raising. This is the
+        # "coarser buckets in sparsely-covered sectors" limitation
+        # documented in the plan's Global Constraints.
+        return same_sector
+
+    # Rank every (ticker, size) pair -- including the event ticker itself
+    # -- by size ascending, tie-breaking by ticker name for a deterministic
+    # order. Bucket index = floor(position / bucket_size), bucket_size =
+    # n / n_deciles. Ranking by POSITION rather than by looking up size
+    # values matters here: two tickers can share an identical size (a
+    # real possibility with a coarse dollar-volume proxy), and a
+    # value-based lookup (e.g. list.index(size)) would silently collapse
+    # every tied ticker onto whichever one happens to appear first in the
+    # sorted list -- verified during planning to misclassify a same-sized
+    # peer into the wrong bucket. Position-based ranking has no such
+    # ambiguity because every entry, including ties, gets its own index.
+    all_pairs = sorted(sized_peers + [(ticker, my_size)], key=lambda p: (p[1], p[0]))
+    n = len(all_pairs)
+    bucket_size = n / n_deciles
+    my_position = next(i for i, (t, _) in enumerate(all_pairs) if t == ticker)
+    my_bucket = int(my_position / bucket_size)
+    return [
+        t for i, (t, _) in enumerate(all_pairs)
+        if t != ticker and int(i / bucket_size) == my_bucket
+    ]
+
+
+def _control_group_return(controls: list[str], d: date, prices: pl.DataFrame, sessions: list[date]) -> float | None:
+    if not controls:
+        return None
+    returns = [daily_return(t, d, prices, sessions) for t in controls]
+    returns = [r for r in returns if r is not None]
+    if not returns:
+        return None
+    return sum(returns) / len(returns)
+
+
+def size_industry_matched_car(ticker: str, event_date: date, horizon: int, prices: pl.DataFrame, sic: pl.DataFrame, market_ticker: str = "SPY") -> float | None:
+    sessions = sessions_from_prices(prices, market_ticker)
+    controls = matched_control_tickers(ticker, event_date, prices, sic, sessions)
+    if not controls:
+        return None
+    dates = _window_dates(event_date, horizon, sessions)
+    if dates is None:
+        return None
+    total = 0.0
+    for d in dates:
+        r_t = daily_return(ticker, d, prices, sessions)
+        r_c = _control_group_return(controls, d, prices, sessions)
+        if r_t is None or r_c is None:
+            return None
+        total += r_t - r_c
+    return total
+
+
+def size_industry_matched_bhar(ticker: str, event_date: date, horizon: int, prices: pl.DataFrame, sic: pl.DataFrame, market_ticker: str = "SPY") -> float | None:
+    sessions = sessions_from_prices(prices, market_ticker)
+    controls = matched_control_tickers(ticker, event_date, prices, sic, sessions)
+    if not controls:
+        return None
+    dates = _window_dates(event_date, horizon, sessions)
+    if dates is None:
+        return None
+    ticker_growth, control_growth = 1.0, 1.0
+    for d in dates:
+        r_t = daily_return(ticker, d, prices, sessions)
+        r_c = _control_group_return(controls, d, prices, sessions)
+        if r_t is None or r_c is None:
+            return None
+        ticker_growth *= 1 + r_t
+        control_growth *= 1 + r_c
+    return (ticker_growth - 1) - (control_growth - 1)
