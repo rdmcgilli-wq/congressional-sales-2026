@@ -3075,8 +3075,18 @@ def _committee_sector(committee_name: str) -> str | None:
 
 
 def committee_match(sample: pl.DataFrame, assignments: pl.DataFrame, sic: pl.DataFrame) -> pl.DataFrame:
+    # skip_nulls=False is required here, not optional: this left join can
+    # produce a null sic_code for any sample ticker with no SIC match, and
+    # polars' map_elements defaults to skip_nulls=True -- which means the
+    # null bypasses ff12_industry() entirely (leaving _sector null) rather
+    # than calling it with None, even though ff12_industry(None) is
+    # explicitly coded to return "Other". This exact bug was found live
+    # during Task 9's implementation (same join-then-map_elements pattern,
+    # different consumer) -- row counts were never wrong, only the label
+    # (unmatched rows got a silent null sector instead of "Other"). Fixed
+    # here pre-emptively rather than left for Task 13 to rediscover.
     df = sample.join(sic.select("ticker", "sic_code"), on="ticker", how="left").with_columns(
-        pl.col("sic_code").map_elements(ff12_industry, return_dtype=pl.Utf8).alias("_sector")
+        pl.col("sic_code").map_elements(ff12_industry, return_dtype=pl.Utf8, skip_nulls=False).alias("_sector")
     )
     member_sectors = (
         assignments.with_columns(
