@@ -74,3 +74,54 @@ def test_committee_match_false_for_unrelated_sector():
     )
     out = classify.committee_match(rows, assignments, sic)
     assert out["committee_match"][0] is False
+
+
+def test_committee_sectors_returns_all_matching_sectors_not_just_first():
+    # "Energy and Commerce" matches BOTH the "Energy" keyword (-> Energy
+    # sector) and the "Commerce" keyword (-> Business Equipment sector). A
+    # first-match-wins classifier only ever returns "Energy" and silently
+    # drops "Business Equipment" -- this is the exact bug the fix covers.
+    sectors = classify._committee_sectors("House Committee on Energy and Commerce")
+    assert set(sectors) == {"Energy", "Business Equipment"}
+
+
+def test_committee_match_flags_second_keyword_sector_for_multi_keyword_committee():
+    # Same "Energy and Commerce" committee as above, but exercised end to
+    # end through committee_match: the traded ticker's FF12 sector (Business
+    # Equipment, from SIC 7372) is only reachable via the SECOND keyword
+    # ("Commerce") that matches this committee's name. Under the old
+    # first-match-wins _committee_sector, this committee only ever resolved
+    # to "Energy", so this trade was never flagged -- proving the bug.
+    rows = pl.DataFrame([_row("IBM", "A1", date(2020, 3, 10))], schema=SAMPLE_SCHEMA)
+    assignments = pl.DataFrame(
+        {
+            "bioguide_id": ["A1"], "committee_code": ["HSIF"], "chamber": ["house"],
+            "committee_name": ["House Committee on Energy and Commerce"],
+        }
+    )
+    sic = pl.DataFrame(
+        {"ticker": ["IBM"], "cik": [51143], "sic_code": ["7372"], "sic_description": ["Prepackaged Software"]},
+        schema={"ticker": pl.Utf8, "cik": pl.Int64, "sic_code": pl.Utf8, "sic_description": pl.Utf8},
+    )
+    out = classify.committee_match(rows, assignments, sic)
+    assert out["committee_match"][0] is True
+
+
+def test_committee_match_adds_only_the_flag_column():
+    # committee_match must follow this module's own convention (and
+    # screens.py's): add exactly one new boolean column to the input,
+    # nothing else -- no leaked join-intermediate columns like sic_code
+    # or _sector.
+    rows = pl.DataFrame([_row("XOM", "A1", date(2020, 3, 10))], schema=SAMPLE_SCHEMA)
+    assignments = pl.DataFrame(
+        {
+            "bioguide_id": ["A1"], "committee_code": ["SSEG"], "chamber": ["senate"],
+            "committee_name": ["Senate Committee on Energy and Natural Resources"],
+        }
+    )
+    sic = pl.DataFrame(
+        {"ticker": ["XOM"], "cik": [34088], "sic_code": ["2911"], "sic_description": ["Petroleum Refining"]},
+        schema={"ticker": pl.Utf8, "cik": pl.Int64, "sic_code": pl.Utf8, "sic_description": pl.Utf8},
+    )
+    out = classify.committee_match(rows, assignments, sic)
+    assert set(out.columns) - set(rows.columns) == {"committee_match"}
