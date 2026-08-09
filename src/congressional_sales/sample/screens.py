@@ -40,14 +40,20 @@ def screen1_rebalancing(sample: pl.DataFrame) -> pl.DataFrame:
         .select("bioguide_id", "transaction_date")
     )
 
+    # maintain_order="left" is required, not cosmetic: the code below combines
+    # these join results with `df`'s other columns via positional Series
+    # &/| rather than a key-based join, so it depends on row order matching
+    # `df` exactly. polars' join docstring explicitly declines to guarantee
+    # any particular row order unless maintain_order is set -- see this
+    # task's review note.
     flag_a = df.join(
         flagged_pairs.with_columns(pl.lit(True).alias("_flag_a")),
-        on=["bioguide_id", "ticker", "transaction_date"], how="left",
+        on=["bioguide_id", "ticker", "transaction_date"], how="left", maintain_order="left",
     )["_flag_a"].fill_null(False)
 
     flag_b = df.join(
         same_day_sales.with_columns(pl.lit(True).alias("_flag_b")),
-        on=["bioguide_id", "transaction_date"], how="left",
+        on=["bioguide_id", "transaction_date"], how="left", maintain_order="left",
     )["_flag_b"].fill_null(False)
 
     is_sale = df["transaction"] == "Sale"
