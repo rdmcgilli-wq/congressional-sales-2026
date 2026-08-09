@@ -68,3 +68,61 @@ def test_screen1_does_not_flag_isolated_single_sale():
     rows = _df([_row("AAPL", "A1", "Sale", date(2020, 6, 1))])
     out = screens.screen1_rebalancing(rows)
     assert out["excluded_rebalancing"][0] is False
+
+
+def _prices(ticker, rows):
+    """rows: list of (date, close_adj)"""
+    n = len(rows)
+    return pl.DataFrame(
+        {
+            "ticker": [ticker] * n, "date": [r[0] for r in rows], "open": [1.0] * n, "high": [1.0] * n,
+            "low": [1.0] * n, "close": [r[1] for r in rows], "volume": [1.0] * n,
+            "close_adj": [r[1] for r in rows],
+        }
+    )
+
+
+def test_screen2_flags_november_sale_at_a_loss_vs_last_purchase():
+    rows = _df(
+        [
+            _row("AAPL", "A1", "Purchase", date(2020, 3, 1)),
+            _row("AAPL", "A1", "Sale", date(2020, 11, 15)),
+        ]
+    )
+    prices = _prices("AAPL", [(date(2020, 3, 1), 100.0), (date(2020, 11, 15), 80.0)])
+    out = screens.screen2_tax_management(rows, prices)
+    sale = out.filter(pl.col("transaction") == "Sale")
+    assert sale["excluded_tax_management"][0] is True
+
+
+def test_screen2_does_not_flag_november_sale_at_a_gain():
+    rows = _df(
+        [
+            _row("AAPL", "A1", "Purchase", date(2020, 3, 1)),
+            _row("AAPL", "A1", "Sale", date(2020, 11, 15)),
+        ]
+    )
+    prices = _prices("AAPL", [(date(2020, 3, 1), 100.0), (date(2020, 11, 15), 120.0)])
+    out = screens.screen2_tax_management(rows, prices)
+    sale = out.filter(pl.col("transaction") == "Sale")
+    assert sale["excluded_tax_management"][0] is False
+
+
+def test_screen2_does_not_flag_a_loss_sale_outside_nov_dec():
+    rows = _df(
+        [
+            _row("AAPL", "A1", "Purchase", date(2020, 3, 1)),
+            _row("AAPL", "A1", "Sale", date(2020, 6, 15)),
+        ]
+    )
+    prices = _prices("AAPL", [(date(2020, 3, 1), 100.0), (date(2020, 6, 15), 80.0)])
+    out = screens.screen2_tax_management(rows, prices)
+    sale = out.filter(pl.col("transaction") == "Sale")
+    assert sale["excluded_tax_management"][0] is False
+
+
+def test_screen2_sale_with_no_prior_purchase_is_not_flagged():
+    rows = _df([_row("AAPL", "A1", "Sale", date(2020, 12, 1))])
+    prices = _prices("AAPL", [(date(2020, 12, 1), 80.0)])
+    out = screens.screen2_tax_management(rows, prices)
+    assert out["excluded_tax_management"][0] is False

@@ -59,3 +59,36 @@ def screen1_rebalancing(sample: pl.DataFrame) -> pl.DataFrame:
     is_sale = df["transaction"] == "Sale"
     excluded = is_sale & (flag_a | flag_b)
     return df.with_columns(excluded.alias("excluded_rebalancing"))
+
+
+def _price_asof(prices: pl.DataFrame, ticker: str, d) -> float | None:
+    rows = prices.filter((pl.col("ticker") == ticker) & (pl.col("date") <= d))
+    if rows.is_empty():
+        return None
+    return rows.sort("date")["close_adj"][-1]
+
+
+def screen2_tax_management(sample: pl.DataFrame, prices: pl.DataFrame) -> pl.DataFrame:
+    df = sample
+    flags = []
+    for row in df.iter_rows(named=True):
+        if row["transaction"] != "Sale" or row["transaction_date"].month not in (11, 12):
+            flags.append(False)
+            continue
+        prior_purchases = df.filter(
+            (pl.col("bioguide_id") == row["bioguide_id"])
+            & (pl.col("ticker") == row["ticker"])
+            & (pl.col("transaction") == "Purchase")
+            & (pl.col("transaction_date") < row["transaction_date"])
+        ).sort("transaction_date", descending=True)
+        if prior_purchases.is_empty():
+            flags.append(False)
+            continue
+        last_purchase_date = prior_purchases["transaction_date"][0]
+        purchase_price = _price_asof(prices, row["ticker"], last_purchase_date)
+        sale_price = _price_asof(prices, row["ticker"], row["transaction_date"])
+        if purchase_price is None or sale_price is None:
+            flags.append(False)
+            continue
+        flags.append(sale_price < purchase_price)
+    return df.with_columns(pl.Series("excluded_tax_management", flags))
