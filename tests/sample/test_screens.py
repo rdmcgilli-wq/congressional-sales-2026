@@ -126,3 +126,56 @@ def test_screen2_sale_with_no_prior_purchase_is_not_flagged():
     prices = _prices("AAPL", [(date(2020, 12, 1), 80.0)])
     out = screens.screen2_tax_management(rows, prices)
     assert out["excluded_tax_management"][0] is False
+
+
+def _terms(bioguide, chamber, start, end):
+    return pl.DataFrame(
+        {
+            "bioguide_id": [bioguide], "full_name": ["Test"], "chamber": [chamber],
+            "term_start": [start], "term_end": [end], "state": ["XX"], "party": ["R"],
+        },
+        schema={
+            "bioguide_id": pl.Utf8, "full_name": pl.Utf8, "chamber": pl.Utf8,
+            "term_start": pl.Date, "term_end": pl.Date, "state": pl.Utf8, "party": pl.Utf8,
+        },
+    )
+
+
+def test_screen3_flags_sale_exceeding_60pct_of_cumulative_net_exposure():
+    rows = _df(
+        [
+            _row("AAPL", "A1", "Purchase", date(2020, 1, 1), amount=10000.0),
+            _row("AAPL", "A1", "Sale", date(2020, 2, 1), amount=8000.0),  # 80% of the 10000 built up
+        ]
+    )
+    terms = _terms("A1", "rep", date(2015, 1, 1), date(2025, 1, 1))
+    out = screens.screen3_liquidation(rows, terms)
+    sale = out.filter(pl.col("transaction") == "Sale")
+    assert sale["excluded_liquidation"][0] is True
+
+
+def test_screen3_does_not_flag_a_small_partial_sale():
+    rows = _df(
+        [
+            _row("AAPL", "A1", "Purchase", date(2020, 1, 1), amount=10000.0),
+            _row("AAPL", "A1", "Sale", date(2020, 2, 1), amount=1000.0),  # 10% of cumulative exposure
+        ]
+    )
+    terms = _terms("A1", "rep", date(2015, 1, 1), date(2025, 1, 1))
+    out = screens.screen3_liquidation(rows, terms)
+    sale = out.filter(pl.col("transaction") == "Sale")
+    assert sale["excluded_liquidation"][0] is False
+
+
+def test_screen3_flags_transaction_near_retirement_term_end():
+    rows = _df([_row("AAPL", "A1", "Sale", date(2020, 12, 20), amount=100.0)])
+    terms = _terms("A1", "rep", date(2015, 1, 1), date(2021, 1, 3))  # term ends 2021-01-03, no later term
+    out = screens.screen3_liquidation(rows, terms)
+    assert out["excluded_liquidation"][0] is True
+
+
+def test_screen3_does_not_flag_a_sitting_members_transaction():
+    rows = _df([_row("AAPL", "A1", "Sale", date(2020, 6, 1), amount=100.0)])
+    terms = _terms("A1", "rep", date(2015, 1, 1), date(2027, 1, 3))  # term ends far in the future
+    out = screens.screen3_liquidation(rows, terms)
+    assert out["excluded_liquidation"][0] is False

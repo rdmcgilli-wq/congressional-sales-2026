@@ -92,3 +92,43 @@ def screen2_tax_management(sample: pl.DataFrame, prices: pl.DataFrame) -> pl.Dat
             continue
         flags.append(sale_price < purchase_price)
     return df.with_columns(pl.Series("excluded_tax_management", flags))
+
+
+def screen3_liquidation(
+    sample: pl.DataFrame,
+    terms: pl.DataFrame,
+    portfolio_liquidation_pct: float = 0.60,
+    retirement_window_days: int = 90,
+) -> pl.DataFrame:
+    df = sample.sort(["bioguide_id", "transaction_date"])
+
+    # Sub-condition 1: cumulative net-exposure proxy.
+    signed = pl.when(pl.col("transaction") == "Purchase").then(pl.col("amount_low")).otherwise(-pl.col("amount_low"))
+    with_cum = df.with_columns(signed.alias("_signed")).with_columns(
+        pl.col("_signed").cum_sum().over("bioguide_id").alias("_cum_exposure")
+    )
+    prior_exposure = with_cum["_cum_exposure"] - with_cum["_signed"]
+    is_big_sale = (with_cum["transaction"] == "Sale") & (prior_exposure > 0) & (
+        with_cum["amount_low"] > portfolio_liquidation_pct * prior_exposure
+    )
+
+    # Sub-condition 2: retirement window.
+    last_terms = (
+        terms.sort(["bioguide_id", "term_start"])
+        .group_by("bioguide_id")
+        .agg(pl.col("term_end").last().alias("last_term_end"))
+    )
+    # maintain_order="left" is required, not optional: is_near_retirement
+    # (derived from with_terms, i.e. this join's output order) gets combined
+    # below with is_big_sale (derived from with_cum, i.e. df's own order) via
+    # plain positional Series `|` -- not key-based alignment. Polars' own
+    # docs explicitly do not guarantee left-join output order matches input
+    # order without this parameter ("may break in a future release... might
+    # differ even between different runs"). This exact bug class was found
+    # and fixed in Task 10's screen1_rebalancing; fixed here pre-emptively.
+    with_terms = df.join(last_terms, on="bioguide_id", how="left", maintain_order="left")
+    gap = (with_terms["transaction_date"] - with_terms["last_term_end"]).dt.total_days().abs()
+    is_near_retirement = with_terms["last_term_end"].is_not_null() & (gap <= retirement_window_days)
+
+    excluded = is_big_sale | is_near_retirement
+    return df.with_columns(excluded.alias("excluded_liquidation"))
