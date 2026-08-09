@@ -48,5 +48,11 @@ def random_control_test(
         "actual_mean": actual_mean,
         "simulated_means": simulated_means,
         "percentile": percentile,
-        "n_iterations_used": n_iterations,
+        # Number of iterations that actually produced a usable simulated
+        # mean -- NOT the requested `n_iterations`. An iteration where
+        # compute_fn returns None for every transaction contributes
+        # nothing to simulated_means and must not count here, since this
+        # value is reported downstream (T4/T5 tables) as "N random-
+        # control iterations" and must reflect what actually happened.
+        "n_iterations_used": len(simulated_means),
     }
