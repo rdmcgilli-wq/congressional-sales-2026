@@ -64,6 +64,16 @@ ASSIGNMENTS_SCHEMA = {"bioguide_id": pl.Utf8, "committee_code": pl.Utf8, "commit
 
 def parse_committee_assignments(membership: dict, committees: list[dict]) -> pl.DataFrame:
     name_and_chamber = {c["thomas_id"]: (c["name"], c["type"]) for c in committees if "thomas_id" in c}
+    for c in committees:
+        parent_id = c.get("thomas_id")
+        if not parent_id:
+            continue
+        for sub in c.get("subcommittees", []) or []:
+            sub_id = sub.get("thomas_id")
+            if not sub_id:
+                continue
+            # Subcommittee entries don't carry their own `type` -- inherit the parent's chamber.
+            name_and_chamber[parent_id + sub_id] = (f"{c['name']} - {sub['name']}", c["type"])
     rows = []
     for code, members in membership.items():
         name, chamber = name_and_chamber.get(code, (code, "unknown"))

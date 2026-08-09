@@ -47,6 +47,23 @@ COMMITTEES_YAML = """
   thomas_id: SSAF
 """
 
+COMMITTEE_MEMBERSHIP_SUBCOMMITTEE_YAML = """
+HSAG15:
+- name: Some Member
+  party: majority
+  rank: 1
+  bioguide: X000001
+"""
+
+COMMITTEES_WITH_SUBCOMMITTEE_YAML = """
+- type: house
+  name: House Committee on Agriculture
+  thomas_id: HSAG
+  subcommittees:
+  - name: Forestry and Horticulture
+    thomas_id: '15'
+"""
+
 
 def test_parse_legislator_terms_produces_one_row_per_term():
     docs = yaml.safe_load(LEGISLATOR_YAML)
@@ -68,6 +85,16 @@ def test_parse_committee_assignments_maps_code_to_name():
     boozman = df.filter(df["bioguide_id"] == "B001236")
     assert boozman["committee_name"][0] == "Senate Committee on Agriculture, Nutrition, and Forestry"
     assert boozman["chamber"][0] == "senate"
+
+
+def test_parse_committee_assignments_resolves_subcommittee_codes():
+    membership = yaml.safe_load(COMMITTEE_MEMBERSHIP_SUBCOMMITTEE_YAML)
+    committees = yaml.safe_load(COMMITTEES_WITH_SUBCOMMITTEE_YAML)
+    df = legislators.parse_committee_assignments(membership, committees)
+    assert df.height == 1
+    row = df.filter(df["bioguide_id"] == "X000001")
+    assert row["committee_name"][0] == "House Committee on Agriculture - Forestry and Horticulture"
+    assert row["chamber"][0] == "house"
 
 
 def test_ingest_legislator_terms_writes_both_current_and_historical(monkeypatch):
