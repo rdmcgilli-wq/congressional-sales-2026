@@ -44,12 +44,76 @@ def _regression_frame() -> pl.DataFrame:
                             "log_size": 10.0 + float(rng.normal(0, 0.5)),
                             "prior_12mo_return": 0.05 + float(rng.normal(0, 0.02)),
                             "size_band": "$1,001 - $15,000",
+                            # chamber/party are carried as DATA-ONLY columns: they are
+                            # part of build_model2_frame's output contract (descriptive
+                            # tables, heterogeneity splits) but run_model2 must NOT put
+                            # them in exog -- see test_run_model2_fits_when_chamber_and_
+                            # party_vary_across_members for why.
                             "chamber": "Representatives", "party": "R",
                             "seniority_terms": int(rng.integers(0, 6)),
                             "bioguide_id": member, "year": year, "industry": industry,
                         }
                     )
     return pl.DataFrame(rows)
+
+
+def _panel_with_chamber_and_party_variation() -> pl.DataFrame:
+    # A panel with REAL cross-member variation in chamber (House/Senate) and
+    # party (R/D), which is exactly what the real screened sample looks like
+    # and what the original fixture above could not exercise (it holds
+    # chamber/party at a single level each, so pd.get_dummies(..., drop_first=
+    # True) emitted zero dummy columns and the collinearity was invisible).
+    #
+    # chamber and party are member-INVARIANT: a member's chamber/party
+    # essentially never changes within the sample window. Once MemberFE is
+    # absorbed, any member-invariant regressor is perfectly collinear with
+    # the member effect, so including chamber/party dummies in exog makes
+    # the model unidentified and AbsorbingLS raises AbsorbingEffectError.
+    #
+    # size_band, by contrast, varies WITHIN a member across transactions, so
+    # its dummies survive absorption and must still be estimated.
+    rng = np.random.default_rng(20200401)
+    members = [
+        ("M1", "Representatives", "R"),
+        ("M2", "Representatives", "D"),
+        ("M3", "Senate", "R"),
+        ("M4", "Senate", "D"),
+    ]
+    bands = ["$1,001 - $15,000", "$15,001 - $50,000", "$50,001 - $100,000"]
+    rows = []
+    for member, chamber, party in members:
+        for year in (2019, 2020):
+            for industry in ("Business Equipment", "Energy", "Money"):
+                for sale in (0, 1):
+                    rows.append(
+                        {
+                            "car": (0.05 if sale else -0.01) + float(rng.normal(0, 0.01)),
+                            "sale": sale,
+                            "opportunistic": int(rng.integers(0, 2)),
+                            "committee_match": int(rng.integers(0, 2)),
+                            "log_size": 10.0 + float(rng.normal(0, 0.5)),
+                            "prior_12mo_return": 0.05 + float(rng.normal(0, 0.02)),
+                            # varies within member -> NOT absorbed by MemberFE
+                            "size_band": bands[int(rng.integers(0, len(bands)))],
+                            # constant within member -> absorbed by MemberFE
+                            "chamber": chamber, "party": party,
+                            "seniority_terms": int(rng.integers(0, 6)),
+                            "bioguide_id": member, "year": year, "industry": industry,
+                        }
+                    )
+    return pl.DataFrame(rows)
+
+
+def _car_sample(**overrides) -> pl.DataFrame:
+    """A single-row CAR-attached sample of the shape build_model2_frame consumes."""
+    cols = {
+        "ticker": ["AAPL"], "bioguide_id": ["A1"], "transaction": ["Sale"],
+        "report_date": [date(2020, 6, 1)], "is_routine": [False], "committee_match": [True],
+        "amount_range": ["$1,001 - $15,000"], "chamber": ["Representatives"], "party": ["R"],
+        "car": [-0.05], "industry": ["Business Equipment"], "prior_12mo_return": [0.12],
+    }
+    cols.update(overrides)
+    return pl.DataFrame(cols)
 
 
 def test_run_model2_returns_all_expected_coefficient_keys():
@@ -70,16 +134,83 @@ def test_run_model2_sale_coefficient_is_positive_on_constructed_data():
     assert result["params"]["sale"] > 0
 
 
+def test_run_model2_fits_when_chamber_and_party_vary_across_members():
+    # THE regression test for this fix. Before the fix, run_model2 built its
+    # exog as pd.get_dummies(pdf[["size_band", "chamber", "party"]]) while
+    # also absorbing MemberFE. chamber/party are member-invariant, so on any
+    # panel with real House/Senate and R/D variation across members those
+    # dummies are perfectly collinear with the absorbed member effect and
+    # AbsorbingLS raised:
+    #
+    #   linearmodels.panel.utility.AbsorbingEffectError: ... The following
+    #   variables or variable combinations have been fully absorbed or have
+    #   become perfectly collinear after effects are removed:
+    #       chamber_Senate, party_R
+    #
+    # i.e. the PRIMARY specification could not be fit on essentially any
+    # realistic screened sample. The fix drops chamber/party from exog (they
+    # are mechanically subsumed by MemberFE, which the pre-registered spec
+    # requires); this test proves the fit now succeeds.
+    df = _panel_with_chamber_and_party_variation()
+    assert df["chamber"].n_unique() == 2 and df["party"].n_unique() == 2
+    assert df["bioguide_id"].n_unique() == 4
+
+    result = model2.run_model2(df)
+
+    assert result["n_obs"] == df.height
+    assert result["n_absorbed_member"] == 4
+    # No chamber/party dummy ever reaches the regressor set.
+    assert not [k for k in result["params"] if k.startswith(("chamber", "party"))]
+    # ...but size_band varies WITHIN a member, so it is NOT absorbed and must
+    # still be estimated. This guards against "fixing" the bug by stripping
+    # every categorical control.
+    assert [k for k in result["params"] if k.startswith("size_band")]
+    core = {
+        "sale", "opportunistic", "sale_x_opportunistic", "committee_match",
+        "sale_x_committee_match", "log_size", "prior_12mo_return", "seniority_terms",
+    }
+    assert core.issubset(result["params"].keys())
+    assert all(se > 0 for se in result["se"].values())
+
+
 def test_build_model2_frame_computes_seniority_from_prior_terms():
-    sample = pl.DataFrame(
-        {
-            "ticker": ["AAPL"], "bioguide_id": ["A1"], "transaction": ["Sale"],
-            "report_date": [date(2020, 6, 1)], "is_routine": [False], "committee_match": [True],
-            "amount_range": ["$1,001 - $15,000"], "chamber": ["Representatives"], "party": ["R"],
-            "car": [-0.05],
-        }
+    out = model2.build_model2_frame(
+        _car_sample(), size_proxies={("AAPL", date(2020, 6, 1)): 100_000.0}, terms=_terms(), car_col="car"
     )
-    terms = pl.DataFrame(
+    assert out["seniority_terms"][0] == 3  # all 3 prior terms started before the report_date
+    assert out["sale"][0] == 1
+    assert out["opportunistic"][0] == 1
+
+
+def test_build_model2_frame_reads_industry_and_prior_return_from_the_sample():
+    # Real values must flow through untouched -- no silent default.
+    out = model2.build_model2_frame(
+        _car_sample(industry=["Energy"], prior_12mo_return=[-0.33]),
+        size_proxies={("AAPL", date(2020, 6, 1)): 100_000.0}, terms=_terms(), car_col="car",
+    )
+    assert out["industry"][0] == "Energy"
+    assert out["prior_12mo_return"][0] == pytest.approx(-0.33)
+
+
+@pytest.mark.parametrize("missing", ["industry", "prior_12mo_return"])
+def test_build_model2_frame_raises_when_required_car_columns_are_missing(missing):
+    # These two columns are produced by events.attach.attach_car_bhar (Task 22).
+    # A caller who skips that step must get a loud, actionable error rather
+    # than a silently degenerate regression (the old code did
+    # row.get("industry", "Other"), collapsing every ticker to one industry,
+    # and row.get("prior_12mo_return") -> all-null control).
+    sample = _car_sample().drop(missing)
+    with pytest.raises(ValueError) as excinfo:
+        model2.build_model2_frame(
+            sample, size_proxies={("AAPL", date(2020, 6, 1)): 100_000.0}, terms=_terms(), car_col="car"
+        )
+    message = str(excinfo.value)
+    assert missing in message
+    assert "attach_car_bhar" in message
+
+
+def _terms() -> pl.DataFrame:
+    return pl.DataFrame(
         {
             "bioguide_id": ["A1", "A1", "A1"], "full_name": ["x"] * 3, "chamber": ["rep"] * 3,
             "term_start": [date(2015, 1, 1), date(2017, 1, 1), date(2019, 1, 1)],
@@ -87,7 +218,3 @@ def test_build_model2_frame_computes_seniority_from_prior_terms():
             "state": ["XX"] * 3, "party": ["R"] * 3,
         }
     )
-    out = model2.build_model2_frame(sample, size_proxies={("AAPL", date(2020, 6, 1)): 100_000.0}, terms=terms, car_col="car")
-    assert out["seniority_terms"][0] == 3  # all 3 prior terms started before the report_date
-    assert out["sale"][0] == 1
-    assert out["opportunistic"][0] == 1
