@@ -58,3 +58,17 @@ def test_unconditional_means_table_drops_null_car_rows():
     )
     t = model1.unconditional_means_table(sample, car_col="car")
     assert t.filter(pl.col("transaction") == "Sale")["n"][0] == 1
+
+
+def test_clustered_mean_warns_when_fewer_than_two_clusters():
+    """Regression: cluster-robust SE is undefined at n_clusters<2 (statsmodels'
+    G/(G-1) finite-sample correction divides by zero). The degenerate branch
+    must not fire silently -- a NaN sitting in a rendered T4/T5 table cell is
+    ambiguous (formatting bug vs. genuinely underpowered subgroup) unless the
+    pipeline surfaces a warning when it happens."""
+    with pytest.warns(UserWarning, match="cluster-robust SE undefined"):
+        got = model1.clustered_mean([0.05], ["A1"])
+    assert got["mean"] == pytest.approx(0.05)
+    assert got["se"] != got["se"]  # NaN
+    assert got["t_stat"] != got["t_stat"]  # NaN
+    assert got["n"] == 1

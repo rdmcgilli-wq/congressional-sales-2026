@@ -4,6 +4,8 @@ separately, on calendar month."""
 
 from __future__ import annotations
 
+import warnings
+
 import numpy as np
 import polars as pl
 import statsmodels.api as sm
@@ -23,6 +25,11 @@ def clustered_mean(values: list[float], cluster_ids: list) -> dict:
         # undefined rather than crashing or reporting a misleadingly-precise
         # se of 0.0 (which would read as "infinitely significant").
         mean = float(np.mean(y)) if n > 0 else float("nan")
+        warnings.warn(
+            f"cluster-robust SE undefined: {n_clusters} cluster(s) for n={n} observations "
+            "-- se/t_stat reported as NaN, not 0.0",
+            stacklevel=2,
+        )
         return {"mean": mean, "se": float("nan"), "t_stat": float("nan"), "n": n}
     fit = sm.OLS(y, X).fit(cov_type="cluster", cov_kwds={"groups": np.array(cluster_ids)})
     return {"mean": float(fit.params[0]), "se": float(fit.bse[0]), "t_stat": float(fit.tvalues[0]), "n": n}
