@@ -2876,7 +2876,15 @@ def screen3_liquidation(
         .group_by("bioguide_id")
         .agg(pl.col("term_end").last().alias("last_term_end"))
     )
-    with_terms = df.join(last_terms, on="bioguide_id", how="left")
+    # maintain_order="left" is required, not optional: is_near_retirement
+    # (derived from with_terms, i.e. this join's output order) gets combined
+    # below with is_big_sale (derived from with_cum, i.e. df's own order) via
+    # plain positional Series `|` -- not key-based alignment. Polars' own
+    # docs explicitly do not guarantee left-join output order matches input
+    # order without this parameter ("may break in a future release... might
+    # differ even between different runs"). This exact bug class was found
+    # and fixed in Task 10's screen1_rebalancing; fixed here pre-emptively.
+    with_terms = df.join(last_terms, on="bioguide_id", how="left", maintain_order="left")
     gap = (with_terms["transaction_date"] - with_terms["last_term_end"]).dt.total_days().abs()
     is_near_retirement = with_terms["last_term_end"].is_not_null() & (gap <= retirement_window_days)
 
@@ -3096,7 +3104,14 @@ def committee_match(sample: pl.DataFrame, assignments: pl.DataFrame, sic: pl.Dat
         .group_by("bioguide_id")
         .agg(pl.col("_committee_sector").unique().alias("_member_sectors"))
     )
-    joined = df.join(member_sectors, on="bioguide_id", how="left")
+    # maintain_order="left" is required here too: `matched` is built by
+    # iterating joined's rows in whatever order the join produces, then
+    # attached back to df positionally via pl.Series(...) below -- a
+    # different frame's row order. Same bug class as Task 10/12's fix;
+    # see those tasks' notes for the full explanation (polars' own docs
+    # explicitly do not guarantee left-join output order without this
+    # parameter).
+    joined = df.join(member_sectors, on="bioguide_id", how="left", maintain_order="left")
     matched = [
         row["_sector"] in (row["_member_sectors"] or [])
         for row in joined.select("_sector", "_member_sectors").iter_rows(named=True)
