@@ -17,8 +17,8 @@ project. This is a documented deviation from Section 7, not a silent
 gap; state it in the paper's limitations section.
 
 chamber and party are NOT regressors -- they are mechanically absorbed
-by MemberFE
-=========================================================
+by MemberFE.
+
 `chamber` and `party` are member-INVARIANT: a member's chamber and party
 essentially never change within the sample window. MemberFE is explicitly
 part of the pre-registered Model 2 specification above, and once member
