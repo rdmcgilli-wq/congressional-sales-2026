@@ -88,6 +88,68 @@ def test_attach_car_bhar_computes_prior_12mo_return_when_enough_history_exists()
     assert out["prior_12mo_return"][0] == pytest.approx(1.001 ** 252 - 1, abs=1e-6)
 
 
+def test_attach_car_bhar_prior_12mo_return_anchors_backward_from_a_non_session_event_date():
+    # Review finding: none of the other tests pass an event_date that is
+    # NOT itself a known trading session -- a realistic case in production
+    # (STOCK Act disclosures can be dated/reported on a weekend), and
+    # exactly the scenario _anchor_session's bisect_right (vs. a plain
+    # offset_within_days(..., d, 0) call) exists to handle correctly.
+    # Sessions here are weekdays only; the event date is a real Saturday
+    # with no price row at all, so attach_car_bhar must anchor backward to
+    # the prior Friday before computing prior_12mo_return, not treat the
+    # Saturday as a session (which would silently misalign the whole
+    # 252-session lookback window) or crash.
+    start = date(2019, 1, 1)  # a Tuesday
+    calendar_days = [start + timedelta(days=i) for i in range(700)]
+    sessions = [d for d in calendar_days if d.weekday() < 5]
+    assert len(sessions) > 450  # comfortably enough weekday sessions for a 252-session lookback
+
+    friday_idx = next(i for i, d in enumerate(sessions) if i >= 260 and d.weekday() == 4)
+    friday = sessions[friday_idx]
+    saturday = friday + timedelta(days=1)
+    assert saturday.weekday() == 5
+    assert saturday not in sessions  # no price row exists for this date at all
+    monday_idx = friday_idx + 1  # the session bisect_right would land on if it (wrongly) anchored forward
+
+    # A constant per-session growth rate would make every 252-session
+    # window return the identical ratio regardless of which day anchors
+    # it -- unable to distinguish "anchored to Friday" from "anchored to
+    # (wrongly) the following Monday". Break that degeneracy with a
+    # one-off price jump on the Monday session only: this changes the
+    # ratio if and only if the anchor is (incorrectly) resolved forward
+    # to Monday instead of backward to Friday.
+    price_rows = []
+    price = 100.0
+    for i, d in enumerate(sessions):
+        if i > 0:
+            price *= 1.001
+        row_price = price * 3.0 if i == monday_idx else price
+        price_rows.append({"ticker": "AAPL", "date": d, "open": 1.0, "high": 1.0, "low": 1.0, "close": row_price, "volume": 1000.0, "close_adj": row_price})
+        price_rows.append({"ticker": "SPY", "date": d, "open": 1.0, "high": 1.0, "low": 1.0, "close": 100.0, "volume": 1000.0, "close_adj": 100.0})
+    prices = pl.DataFrame(price_rows, schema=PRICE_SCHEMA)
+    factors = pl.DataFrame(schema=FACTOR_SCHEMA)
+    sic = pl.DataFrame({"ticker": ["AAPL"], "cik": [320193], "sic_code": ["3571"], "sic_description": ["x"]}, schema=SIC_SCHEMA)
+
+    sample = pl.DataFrame(
+        {
+            "ticker": ["AAPL"], "bioguide_id": ["A1"], "transaction": ["Sale"],
+            "transaction_date": [saturday], "report_date": [saturday],
+        },
+        schema=SAMPLE_SCHEMA,
+    )
+    out = attach.attach_car_bhar(sample, prices, factors, sic)
+    # Correctly anchored to Friday, prior_12mo_return is untouched by the
+    # Monday-only price jump (neither the Friday nor Friday-252 endpoint
+    # is Monday) -- the plain 252-session compounded return.
+    assert out["prior_12mo_return"][0] == pytest.approx(1.001 ** 252 - 1, abs=1e-6)
+    # If _anchor_session instead (wrongly) anchored forward to Monday, p1
+    # would pick up the 3x jump and the ratio would come out roughly
+    # 3x too high -- confirm the correct value is not confoundable with
+    # that wrong-anchor value.
+    wrong_anchor_return = (price * 3.0 - price_rows[2 * (monday_idx - 252)]["close"]) / price_rows[2 * (monday_idx - 252)]["close"]
+    assert out["prior_12mo_return"][0] != pytest.approx(wrong_anchor_return, abs=1e-6)
+
+
 def test_attach_car_bhar_industry_is_other_for_unknown_sic():
     sessions = [date(2020, 1, 1) + timedelta(days=i) for i in range(10)]
     price_rows = [
