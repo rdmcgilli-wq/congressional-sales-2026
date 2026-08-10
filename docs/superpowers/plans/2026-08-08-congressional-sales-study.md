@@ -6328,16 +6328,46 @@ HOLDOUT_START = date(2025, 1, 1)  # the most recent 18 months -- confirm against
 
 
 def main() -> None:
+    # ensure() creates raw/, parquet/, and outputs/ if they don't exist --
+    # required before any write_csv/write_text call below. Without this,
+    # the script crashes with FileNotFoundError on a genuinely fresh
+    # clone/environment where outputs/ has never been created (confirmed
+    # empirically before this task was built: outputs/ is not tracked in
+    # git and write_csv does not auto-create parent directories).
+    storage.paths().ensure()
+
     result = build_sample(period_end=HOLDOUT_START)
     prices, factors = storage.read("equity_eod"), storage.read("ff_factors")
     terms, assignments = storage.read("legislator_terms"), storage.read("committee_assignments")
     sic = storage.read("sic_codes")
 
-    unscreened = result.sample
+    # is_routine (H3) and committee_match (H4) are classified ONCE, on the
+    # unscreened sample, before splitting into unscreened/screened -- not
+    # separately on each. Two reasons, both load-bearing:
+    #  1. Section 4 states "Report main results on both the unscreened and
+    #     screened samples. The gap between them is itself informative" --
+    #     a meaningful gap requires the SAME opportunistic/committee_match
+    #     classification framework under both, not two different ones.
+    #  2. is_routine_trader's classification ("traded in the same calendar
+    #     month in each of the three prior years") is computed from every
+    #     row's transaction_date PRESENT IN THE FRAME IT'S GIVEN -- run
+    #     against the already-screened subset, it would silently see a
+    #     PARTIAL trading history (screens 1-3 remove some of a member's
+    #     transactions) and misclassify members whose true routine pattern
+    #     included exactly the transactions those screens exclude.
+    # Confirmed empirically before this task was built: the earlier draft
+    # of this script classified only `screened`, leaving `unscreened`
+    # without is_routine/committee_match columns at all --
+    # build_model2_frame reads them via row.get(...) (not a strict
+    # ValueError guard), so a missing column doesn't raise, it silently
+    # defaults opportunistic to a CONSTANT 1 and committee_match to a
+    # CONSTANT 0 for every row of the "full" Model 2 run -- the same class
+    # of intercept-collinearity bug already found in Task 19
+    # (chamber/party) and Task 23's robustness fixture design.
+    unscreened = classify.committee_match(classify.is_routine_trader(result.sample), assignments, sic)
     screened = screen3_liquidation(
         screen2_tax_management(screen1_rebalancing(unscreened), prices), terms
     ).filter(~(pl_or(["excluded_rebalancing", "excluded_tax_management", "excluded_liquidation"])))
-    screened = classify.committee_match(classify.is_routine_trader(screened), assignments, sic)
 
     unscreened_with_car = attach_car_bhar(unscreened, prices, factors, sic)
     screened_with_car = attach_car_bhar(screened, prices, factors, sic)
@@ -6389,15 +6419,43 @@ if __name__ == "__main__":
 
 This script is intentionally left with two rough edges for the
 implementer to close during Task 29 rather than treat as finished:
-`size_proxies` is an empty dict (must be populated by calling
-`car.size_proxy` for every `(ticker, report_date)` pair the sample
-actually needs, cached, before `build_model2_frame` can produce non-null
-`log_size` values), and F1-F8 figure generation/writing to disk is not
-yet wired in (each `figures.fN_*` function needs its specific inputs
-assembled from the tables/results above and `fig.savefig(...)` called).
-Both are straightforward composition of already-built, already-tested
-pieces — finish them as part of this task's own review cycle, they were
-left out of this listing only to keep it from growing further.
+`size_proxies` is an empty dict, and F1-F8 figure generation/writing to
+disk is not yet wired in (each `figures.fN_*` function needs its
+specific inputs assembled from the tables/results above and
+`fig.savefig(...)` called). Both are straightforward composition of
+already-built, already-tested pieces — finish them as part of this
+task's own review cycle, they were left out of this listing only to keep
+it from growing further.
+
+**`size_proxies` population -- verified helper, use this exact pattern**
+(confirmed empirically before this task was built: an empty
+`size_proxies` dict makes `build_model2_frame` compute a null `log_size`
+for every row, which its own `drop_nulls(["car", "log_size",
+"prior_12mo_return"])` then drops entirely -- silently producing a
+0-row frame, which crashes `run_model2` with `ValueError: cannot
+reshape array of size 0 into shape (0,newaxis)` deep inside
+`AbsorbingLS`. Confirmed the fix below resolves it end-to-end against a
+synthetic fixture before writing it into this plan):
+
+```python
+def _populate_size_proxies(sample_with_car: pl.DataFrame, prices: pl.DataFrame) -> dict:
+    from congressional_sales.events import car
+
+    sessions = car.sessions_from_prices(prices)
+    pairs = sample_with_car.select("ticker", "report_date").unique()
+    return {
+        (row["ticker"], row["report_date"]): car.size_proxy(row["ticker"], row["report_date"], prices, sessions)
+        for row in pairs.iter_rows(named=True)
+    }
+```
+
+Call this once against `unscreened_with_car` (whose `(ticker,
+report_date)` pairs are a superset of `screened_with_car`'s, since
+`screened` is filtered from the same initial sample) to get the single
+`size_proxies` dict used everywhere below -- `full_frame`,
+`screened_frame`, and `run_robustness_suite` all consume the same dict.
+`import polars as pl` at module top (needed by `pairs.select(...)` and
+already implied by the rest of the script).
 
 - [ ] **Step 2: Implement `scripts/run_holdout.py`**
 
@@ -6411,22 +6469,67 @@ from __future__ import annotations
 
 from datetime import date
 
+import polars as pl
+
 from congressional_sales import storage
+from congressional_sales.events import car
 from congressional_sales.events.attach import attach_car_bhar
 from congressional_sales.models import model2
+from congressional_sales.sample import classify
 from congressional_sales.sample.funnel import build_sample
+from congressional_sales.sample.screens import screen1_rebalancing, screen2_tax_management, screen3_liquidation
 
 HOLDOUT_START = date(2025, 1, 1)  # keep in sync with run_full_pipeline.py
 
 
+def _populate_size_proxies(sample_with_car: pl.DataFrame, prices: pl.DataFrame) -> dict:
+    sessions = car.sessions_from_prices(prices)
+    pairs = sample_with_car.select("ticker", "report_date").unique()
+    return {
+        (row["ticker"], row["report_date"]): car.size_proxy(row["ticker"], row["report_date"], prices, sessions)
+        for row in pairs.iter_rows(named=True)
+    }
+
+
+def _pl_or(cols: list[str]):
+    expr = pl.col(cols[0])
+    for c in cols[1:]:
+        expr = expr | pl.col(c)
+    return expr
+
+
 def main() -> None:
+    storage.paths().ensure()
     result = build_sample(period_start=HOLDOUT_START)
     prices, factors = storage.read("equity_eod"), storage.read("ff_factors")
     sic = storage.read("sic_codes")
-    terms = storage.read("legislator_terms")
+    terms, assignments = storage.read("legislator_terms"), storage.read("committee_assignments")
 
-    with_car = attach_car_bhar(result.sample, prices, factors, sic)
-    frame = model2.build_model2_frame(with_car, {}, terms, "car_four_factor_90")
+    # Section 9 item 10 is the last of "10 checks, primary specification
+    # only" (Section 9's own header) -- it re-runs the SCREENED-sample
+    # primary specification on the holdout period, not an unscreened
+    # variant. The earlier draft of this script attached CAR and ran
+    # Model 2 directly on build_sample()'s raw output, skipping Screens
+    # 1-4 and the H3/H4 classification entirely -- silently testing a
+    # different (unscreened) specification than every other robustness
+    # check, and leaving is_routine/committee_match absent from the
+    # frame entirely. build_model2_frame reads those via row.get(...)
+    # (not the strict ValueError guard industry/prior_12mo_return get),
+    # so a missing column doesn't raise -- it silently defaults
+    # opportunistic to a CONSTANT 1 and committee_match to a CONSTANT 0
+    # for every row, the exact same class of intercept-collinearity bug
+    # already found and fixed in Task 19 (chamber/party) and worked
+    # around in Task 23's robustness fixture. Fixed by applying the same
+    # screening funnel run_full_pipeline.py uses for its `screened`
+    # sample, before attaching CAR.
+    screened = screen3_liquidation(
+        screen2_tax_management(screen1_rebalancing(result.sample), prices), terms
+    ).filter(~(_pl_or(["excluded_rebalancing", "excluded_tax_management", "excluded_liquidation"])))
+    screened = classify.committee_match(classify.is_routine_trader(screened), assignments, sic)
+
+    with_car = attach_car_bhar(screened, prices, factors, sic)
+    size_proxies = _populate_size_proxies(with_car, prices)
+    frame = model2.build_model2_frame(with_car, size_proxies, terms, "car_four_factor_90")
     holdout_result = model2.run_model2(frame)
     print("HOLDOUT RESULT (Section 9 item 10 -- run once, report as-is):")
     print(holdout_result)
