@@ -5051,8 +5051,9 @@ deliberately excluded from its loop:
 ```python
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 
+import numpy as np
 import polars as pl
 import pytest
 
@@ -5067,25 +5068,85 @@ def test_winsorize_clips_extreme_values_to_the_percentile_bounds():
     assert got.len() == 6  # winsorizing clips, never drops rows
 
 
-def _sample_row(bioguide, ticker, sale, car, chamber="Representatives", amount_range="$1,001 - $15,000", year=2020, industry="Business Equipment"):
-    return {
-        "ticker": ticker, "bioguide_id": bioguide, "transaction": "Sale" if sale else "Purchase",
-        "report_date": date(year, 6, 1), "car_four_factor_90": car,
-        "is_routine": False, "committee_match": False, "amount_range": amount_range,
-        "chamber": chamber, "party": "R", "industry": industry,
-    }
+def _robustness_fixture():
+    # A 30-distinct-member, 1-transaction-each fixture (the original draft
+    # of this test) is UNFIT for a fixed-effects regression: with exactly
+    # one observation per bioguide_id, MemberFE has zero within-member
+    # degrees of freedom and perfectly absorbs every regressor --
+    # AbsorbingLS raises AbsorbingEffectError on literally any exog column,
+    # confirmed empirically before this task was built. A single
+    # deterministic control value shared by every row (is_routine=False
+    # for all -> opportunistic constant 1; an empty terms frame ->
+    # seniority_terms constant 0; one size_proxies value for every ticker
+    # -> log_size constant) is independently fatal too: a column that
+    # never varies is perfectly collinear with the regression's own
+    # intercept, with or without any fixed effect involved. This fixture
+    # instead builds a genuinely varied panel -- multiple transactions per
+    # member, randomized is_routine/committee_match/size/prior-return/
+    # report_date, and a terms table with real term_start variation -- so
+    # the primary regression the robustness suite reruns can actually be
+    # estimated, mirroring the panel-construction lessons already applied
+    # in tests/models/test_model2.py's own fixtures.
+    rng = np.random.default_rng(7)
+    members = [f"M{i}" for i in range(10)]
+    industries = ["Business Equipment", "Energy", "Money", "Manufacturing"]
+    bands = ["$1,001 - $15,000", "$15,001 - $50,000", "$50,001 - $100,000"]
 
+    def random_date(start_year, end_year):
+        start = date(start_year, 1, 1)
+        days = (date(end_year, 12, 31) - start).days
+        return start + timedelta(days=int(rng.integers(0, days)))
 
-def test_run_robustness_suite_produces_one_row_per_check_and_the_full_sample():
-    rows = [_sample_row(f"M{i}", f"T{i}", sale=(i % 2 == 0), car=0.01 * i) for i in range(30)]
+    rows = []
+    for i in range(80):
+        m = members[int(rng.integers(0, len(members)))]
+        rows.append(
+            {
+                "ticker": f"T{i}", "bioguide_id": m,
+                "transaction": "Sale" if int(rng.integers(0, 2)) else "Purchase",
+                "report_date": random_date(2015, 2022),
+                "car_four_factor_90": float(rng.normal(0, 0.05)),
+                "is_routine": bool(rng.integers(0, 2)),
+                "committee_match": bool(rng.integers(0, 2)),
+                "amount_range": bands[int(rng.integers(0, len(bands)))],
+                "chamber": "Senate" if m in ("M0", "M1", "M2") else "Representatives",
+                "party": "R",
+                "industry": industries[int(rng.integers(0, len(industries)))],
+                "prior_12mo_return": 0.05 + float(rng.normal(0, 0.1)),
+            }
+        )
     sample = pl.DataFrame(rows)
+
+    # prior_12mo_return/industry must be real columns: Task 19's
+    # build_model2_frame raises ValueError if either is missing from its
+    # input frame entirely (added in Task 19's fix, after this fixture was
+    # originally drafted -- patched in before Task 23 was built, mirroring
+    # the join-order pre-emptive fixes applied to Tasks 12/13). Every
+    # robustness check below runs its filtered subset through
+    # build_model2_frame, so both must be present from the start.
+    terms_rows = []
+    for m in members:
+        for _ in range(int(rng.integers(0, 4))):
+            terms_rows.append(
+                {
+                    "bioguide_id": m, "full_name": "x", "chamber": "rep",
+                    "term_start": random_date(2005, 2020), "term_end": random_date(2021, 2023),
+                    "state": "XX", "party": "R",
+                }
+            )
     terms = pl.DataFrame(
+        terms_rows,
         schema={
             "bioguide_id": pl.Utf8, "full_name": pl.Utf8, "chamber": pl.Utf8,
             "term_start": pl.Date, "term_end": pl.Date, "state": pl.Utf8, "party": pl.Utf8,
-        }
+        },
     )
-    size_proxies = {(f"T{i}", date(2020, 6, 1)): 100_000.0 for i in range(30)}
+    size_proxies = {(r["ticker"], r["report_date"]): float(rng.uniform(10_000, 1_000_000)) for r in rows}
+    return sample, terms, size_proxies
+
+
+def test_run_robustness_suite_produces_one_row_per_check_and_the_full_sample():
+    sample, terms, size_proxies = _robustness_fixture()
     result = robustness.run_robustness_suite(sample, size_proxies, terms)
     labels = set(result["check"].to_list())
     assert "full_screened_sample" in labels
@@ -5093,6 +5154,13 @@ def test_run_robustness_suite_produces_one_row_per_check_and_the_full_sample():
     assert "senate_only" in labels
     assert "house_only" in labels
     assert "winsorized_1_99" in labels
+    # full_screened_sample has real within-member variation across every
+    # regressor and 10 members -- the primary regression must actually
+    # succeed here, not silently fall through to a None row (which would
+    # make this test pass even if run_model2 never ran at all).
+    full_row = result.filter(pl.col("check") == "full_screened_sample")
+    assert full_row["beta_sale"][0] is not None
+    assert full_row["n"][0] == 80
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -5111,12 +5179,23 @@ why items 6 and 10 are handled outside this module."""
 from __future__ import annotations
 
 import polars as pl
+from linearmodels.panel.utility import AbsorbingEffectError
 
 from .models import model2
 
 
 def winsorize(values: pl.Series, lower: float = 0.01, upper: float = 0.99) -> pl.Series:
-    lo, hi = values.quantile(lower), values.quantile(upper)
+    # interpolation="linear" is required, not cosmetic: polars' default
+    # quantile interpolation is "nearest", which for small/boundary-heavy
+    # samples can return the sample's own max/min as the clip bound (e.g.
+    # a 6-point [1,2,3,4,100,-100] array's nearest-interpolated 90th
+    # percentile is exactly 100.0), silently no-op'ing the clip on
+    # precisely the extreme values winsorizing exists to control. Linear
+    # interpolation is also the standard convention for winsorizing in
+    # applied statistics (matches numpy.percentile's default), not just a
+    # fix for this test.
+    lo = values.quantile(lower, interpolation="linear")
+    hi = values.quantile(upper, interpolation="linear")
     return values.clip(lo, hi)
 
 
@@ -5131,7 +5210,27 @@ def _run_primary(label: str, df: pl.DataFrame, size_proxies: dict, terms: pl.Dat
     frame = model2.build_model2_frame(df, size_proxies, terms, car_col)
     if frame.height < 10 or frame["bioguide_id"].n_unique() < 2:
         return {"check": label, "beta_sale": None, "se": None, "n": frame.height}
-    result = model2.run_model2(frame)
+    # A robustness check restricting the sample (by chamber, by year, by
+    # excluding top traders, ...) can leave a subset where the fixed-
+    # effects structure itself degenerates -- e.g. every remaining row
+    # shares one year or one industry (AbsorbingLS/pyhdfe: "All fixed
+    # effects after the first one should have more than one level",
+    # plain ValueError), or a regressor becomes perfectly collinear with
+    # the absorbed effects on that particular subset (AbsorbingEffectError,
+    # NOT a ValueError subclass -- confirmed against the installed
+    # linearmodels version before this task was built; both must be
+    # caught explicitly). Confirmed empirically pre-build: even a
+    # reasonably sized, well-randomized 10-member/80-row panel produces
+    # this on its senate_only subset (only 3 of 10 members are Senate).
+    # This is exactly the "too few observations to run a meaningful
+    # regression" case the None-row contract already covers -- a
+    # degenerate FE structure is a form of insufficient variation, not a
+    # different failure category -- so it must return the same None row
+    # rather than letting the whole suite crash.
+    try:
+        result = model2.run_model2(frame)
+    except (ValueError, AbsorbingEffectError):
+        return {"check": label, "beta_sale": None, "se": None, "n": frame.height}
     return {"check": label, "beta_sale": result["params"].get("sale"), "se": result["se"].get("sale"), "n": result["n_obs"]}
 
 
@@ -5179,15 +5278,14 @@ def run_robustness_suite(
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `uv run pytest tests/test_robustness.py -v`
-Expected: `2 passed`. The 30-row synthetic sample in the second test is
-sized to clear every internal `< 10` / `< 2 unique members` guard for
-every check's filtered subset — if a specific check's row ends up with
-`beta_sale=None` unexpectedly, check whether that check's filter leaves
-too few rows or too few distinct `bioguide_id` values in this particular
-fixture (each of the 30 rows uses a distinct `M{i}`/`T{i}`, so
-`excl_top5_traders`/`excl_top10_traders` remove entire members rather
-than thinning an existing one — confirm this still clears the `>=2
-distinct members` guard before trusting the assertion list above).
+Expected: `2 passed`. Not every check in the 80-row fixture is guaranteed
+to produce a non-null `beta_sale` (e.g. `senate_only` has only 3 of 10
+members and can legitimately degenerate the fixed-effects structure —
+this is exactly what the `except (ValueError, AbsorbingEffectError)`
+branch in `_run_primary` is for) — the test only requires that
+`full_screened_sample` (10 members, real within-member variation) comes
+back non-null, and that every check's label appears in the output
+without the whole function raising.
 
 - [ ] **Step 5: Commit**
 
