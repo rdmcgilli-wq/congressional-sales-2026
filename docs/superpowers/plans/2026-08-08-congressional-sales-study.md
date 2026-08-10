@@ -6009,6 +6009,33 @@ def test_delisting_audit_flags_a_ticker_with_a_large_price_gap():
     assert "LIVE" not in got["ticker"].to_list()
 
 
+def test_delisting_audit_flags_a_ticker_with_zero_price_history():
+    # A ticker absent from `prices` entirely is a WORSE data-completeness
+    # problem than merely-stale (>gap_days) data -- silently dropping it
+    # from the audit would understate the very survivorship-bias signal
+    # this function exists to quantify. Confirmed empirically before this
+    # task was built: a plain `days_since_last_price > gap_days` filter
+    # evaluates to null (not True) for a ticker whose left-joined
+    # last_price_date is null, so it never survives the filter and
+    # disappears from the output with no trace -- indistinguishable from
+    # "checked and found fine." last_price_date/days_since_last_price
+    # must come through as None in the output, not omit the row.
+    sample = pl.DataFrame({"ticker": ["GHOST", "LIVE"], "report_date": [date(2020, 6, 1), date(2020, 6, 1)]})
+    prices = pl.DataFrame(
+        {
+            "ticker": ["LIVE"], "date": [date(2020, 6, 1)],
+            "open": [1.0], "high": [1.0], "low": [1.0], "close": [1.0],
+            "volume": [1.0], "close_adj": [1.0],
+        }
+    )
+    got = audits.delisting_audit(sample, prices, gap_days=90)
+    assert "GHOST" in got["ticker"].to_list()
+    ghost = got.filter(pl.col("ticker") == "GHOST")
+    assert ghost["last_price_date"][0] is None
+    assert ghost["days_since_last_price"][0] is None
+    assert "LIVE" not in got["ticker"].to_list()
+
+
 def test_ticker_reuse_audit_flags_a_cik_with_multiple_tickers():
     sic = pl.DataFrame(
         {"ticker": ["OLDNAME", "NEWNAME", "OTHER"], "cik": [1, 1, 2], "sic_code": ["1", "1", "2"], "sic_description": ["x", "x", "y"]}
@@ -6054,7 +6081,18 @@ def delisting_audit(sample: pl.DataFrame, prices: pl.DataFrame, gap_days: int = 
     joined = sample_tickers.join(last_price, on="ticker", how="left")
     gapped = joined.with_columns(
         (pl.lit(as_of) - pl.col("last_price_date")).dt.total_days().alias("days_since_last_price")
-    ).filter(pl.col("days_since_last_price") > gap_days)
+    ).filter(
+        # A ticker absent from `prices` entirely gets a null
+        # last_price_date from this left join, and `null > gap_days`
+        # evaluates to null (not True) in a polars filter -- so without
+        # the explicit is_null() branch, a ticker with ZERO price history
+        # (a worse data-completeness problem than merely-stale data)
+        # would silently vanish from this audit's output rather than
+        # being flagged, understating the very survivorship-bias signal
+        # this function exists to quantify. Confirmed empirically before
+        # this task was built.
+        (pl.col("days_since_last_price") > gap_days) | pl.col("last_price_date").is_null()
+    )
     return gapped.select("ticker", "last_price_date", "days_since_last_price")
 
 
@@ -6070,7 +6108,7 @@ def ticker_reuse_audit(sic: pl.DataFrame) -> pl.DataFrame:
 - [ ] **Step 5: Run test to verify it passes**
 
 Run: `uv run pytest tests/verification/test_audits.py -v`
-Expected: `3 passed`
+Expected: `4 passed`
 
 - [ ] **Step 6: Commit**
 
