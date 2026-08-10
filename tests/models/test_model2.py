@@ -209,6 +209,36 @@ def test_build_model2_frame_raises_when_required_car_columns_are_missing(missing
     assert "attach_car_bhar" in message
 
 
+def test_build_model2_frame_drops_rows_with_null_prior_12mo_return():
+    # Regression: a null prior_12mo_return (e.g. a ticker lacking ~252
+    # sessions of trailing price history -- a recent IPO or thinly covered
+    # instrument) must be dropped here, at frame-construction time, not left
+    # to reach AbsorbingLS. AbsorbingLS silently drops null-containing rows
+    # internally but the externally-passed `clusters` vector does not
+    # shrink to match, which previously crashed run_model2 with "ValueError:
+    # operands could not be broadcast together with shapes (48,1) (47,1)".
+    sample = pl.concat(
+        [
+            _car_sample(),
+            _car_sample(
+                ticker=["MSFT"], bioguide_id=["A2"], report_date=[date(2020, 7, 1)],
+                car=[0.02], prior_12mo_return=[None],
+            ),
+        ]
+    )
+    out = model2.build_model2_frame(
+        sample,
+        size_proxies={
+            ("AAPL", date(2020, 6, 1)): 100_000.0,
+            ("MSFT", date(2020, 7, 1)): 50_000.0,
+        },
+        terms=_terms(),
+        car_col="car",
+    )
+    assert out.height == 1
+    assert out["bioguide_id"][0] == "A1"
+
+
 def _terms() -> pl.DataFrame:
     return pl.DataFrame(
         {

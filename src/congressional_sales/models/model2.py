@@ -143,7 +143,18 @@ def build_model2_frame(
                 "industry": row["industry"],
             }
         )
-    return pl.DataFrame(rows).drop_nulls(["car", "log_size"])
+    # Complete-case on all three continuous regression inputs -- car,
+    # log_size, and prior_12mo_return. A null prior_12mo_return means the
+    # ticker lacks ~252 sessions of trailing price history (e.g. a recent
+    # IPO or a thinly covered instrument); AbsorbingLS has no null-handling
+    # of its own and silently drops such rows internally, producing a
+    # length mismatch against the externally-passed `clusters` vector
+    # (ValueError: operands could not be broadcast together). Dropping here
+    # keeps the frame passed to run_model2 exactly the sample that is
+    # actually regressed. This is a documented sample-inclusion decision:
+    # trades lacking full trailing price history are excluded from Model 2,
+    # not imputed. Note in the paper's limitations section.
+    return pl.DataFrame(rows).drop_nulls(["car", "log_size", "prior_12mo_return"])
 
 
 def run_model2(df: pl.DataFrame) -> dict:
