@@ -18,6 +18,7 @@ dependencies = [
     "pyyaml>=6.0",
     "scipy>=1.14",
     "pyarrow>=25.0.0",
+    "tabulate>=0.10.0",
 ]
 
 [project.scripts]
