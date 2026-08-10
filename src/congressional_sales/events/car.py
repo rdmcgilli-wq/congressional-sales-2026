@@ -274,3 +274,57 @@ def size_industry_matched_bhar(ticker: str, event_date: date, horizon: int, pric
         ticker_growth *= 1 + r_t
         control_growth *= 1 + r_c
     return (ticker_growth - 1) - (control_growth - 1)
+
+
+def event_time_series(ticker: str, event_date: date, prices: pl.DataFrame, market_ticker: str = "SPY", pre: int = 30, post: int = 180) -> dict:
+    """Baseline is offset 0 (the event date itself), not offset -pre --
+    this makes series[+h] exactly equal market_adjusted_car(..., horizon=h),
+    both being the sum of the same [+1, +h] daily abnormal returns. The
+    pre-event side is a SEPARATE backward accumulation from offset -1 down
+    to -pre, not a continuation of the forward walk -- the two directions
+    share only the offset-0 baseline of 0.0, matching the standard
+    event-study convention of centering the plot on the event date rather
+    than on the start of the pre-event window.
+    """
+    sessions = sessions_from_prices(prices, market_ticker)
+    result: dict[int, float | None] = {0: 0.0}
+
+    cumulative, broken = 0.0, False
+    for offset in range(1, post + 1):
+        if broken:
+            result[offset] = None
+            continue
+        d = offset_within_days(sessions, event_date, offset)
+        if d is None:
+            broken = True
+            result[offset] = None
+            continue
+        r_t = daily_return(ticker, d, prices, sessions)
+        r_m = daily_return(market_ticker, d, prices, sessions)
+        if r_t is None or r_m is None:
+            broken = True
+            result[offset] = None
+            continue
+        cumulative += r_t - r_m
+        result[offset] = cumulative
+
+    cumulative, broken = 0.0, False
+    for offset in range(-1, -pre - 1, -1):
+        if broken:
+            result[offset] = None
+            continue
+        d = offset_within_days(sessions, event_date, offset)
+        if d is None:
+            broken = True
+            result[offset] = None
+            continue
+        r_t = daily_return(ticker, d, prices, sessions)
+        r_m = daily_return(market_ticker, d, prices, sessions)
+        if r_t is None or r_m is None:
+            broken = True
+            result[offset] = None
+            continue
+        cumulative += r_t - r_m
+        result[offset] = cumulative
+
+    return result
