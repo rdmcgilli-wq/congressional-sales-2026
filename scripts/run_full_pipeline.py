@@ -23,28 +23,22 @@ from congressional_sales.sample.screens import screen1_rebalancing, screen2_tax_
 from congressional_sales.verification.audits import delisting_audit, nan_audit, ticker_reuse_audit
 from congressional_sales.verification.hand_check import build_worksheet, select_worksheet_sample
 
-# models.model1 and models.multiple_comparisons are NOT imported here, and
-# this is a real, disclosed gap, not a settled design decision:
-#
-# Model 1 (unconditional mean CAR with member- AND month-clustered SEs,
-# Section 7) has NO consumer anywhere in this assembled pipeline. T4
+# models.model1 is NOT imported directly here -- it doesn't need to be.
+# tables.t4_mean_car (Task 24, revised during the whole-branch review) now
+# routes through models.model1.unconditional_means_table itself, so T4
 # ("Mean CAR by transaction type and horizon, all three adjustment methods",
-# Section 10) is Model 1's own output shape, but is produced here by
-# tables.t4_mean_car -- a bare mean/n calculation with no clustered SE and no
-# t-stat. The practical consequence: nothing this pipeline writes to
-# outputs/ carries cluster-robust inference on the unconditional
-# sale-vs-purchase CAR comparison, the most direct H1/H2 statistic. Whether
-# Model 1's output belongs folded into T4 (replacing tables.t4_mean_car's
-# calculation with model1.unconditional_means_table's, which computes ONE
-# horizon/method at a time rather than T4's full 3x3 grid) or reported
-# separately is an open call for whoever finalizes the paper -- not decided
-# here, because inventing a NEW output slot outside Section 10's
-# pre-specified T1-T8 list would itself violate Section 8's "any
-# specification not in that list is explicitly post-hoc" discipline. See
-# README.md's "Known gaps in this output" for the disclosure.
+# Section 10) carries member- and month-clustered SEs, satisfying Section
+# 7's "report both" on the unconditional sale-vs-purchase CAR comparison
+# (the most direct H1/H2 statistic). This was an open, undecided question
+# earlier in this build (see git history / progress.md for the prior
+# state); it has since been resolved by folding Model 1's output into T4
+# rather than reporting it separately, since T4's Section 10 description IS
+# Model 1's output shape and adding its pre-registered SEs to it is not a
+# new, post-hoc specification.
 #
-# multiple_comparisons feeds `bh_threshold`, which this script does not yet
-# compute (see the note at the build_paper_markdown call below).
+# models.multiple_comparisons is NOT imported: it feeds `bh_threshold`,
+# which this script does not yet compute (see the note at the
+# build_paper_markdown call below).
 
 # --- Sample period constants (PRE_ANALYSIS_PLAN.md Section 4) ------------------
 # "Period: 2014 through the most recent complete year. Hold out the final 18

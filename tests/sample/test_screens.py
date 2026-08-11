@@ -189,16 +189,18 @@ def test_screen3_result_is_invariant_to_input_row_order_for_same_day_transaction
     # see same-day rows in a different relative order depending on how
     # they arrived, silently changing which row "sees" the prior exposure
     # from the others and therefore changing excluded_liquidation's
-    # actual value (not just row order). Regression/contract guard: feed
-    # the identical three same-day rows in forward and reversed order and
-    # assert byte-identical flags either way. This is a total-order
-    # contract test, not a mutation-proof against the old partial-key
-    # code -- polars' observed sort behavior happens to be stable for
-    # inputs this small on this build (confirmed empirically before
-    # writing this test), so this guards against a future regression
-    # (e.g. a refactor dropping the extended sort key, a different
-    # polars version, or a larger real dataset) rather than reproducing
-    # today's exact failure.
+    # actual value (not just row order). Feed the identical three same-day
+    # rows in forward and reversed order and assert byte-identical flags
+    # either way. This IS a real mutation-proof against the old partial-key
+    # code, not just a forward-looking contract guard: reverting the sort
+    # to ["bioguide_id", "transaction_date"] alone makes this exact test
+    # fail (forward gives [False, False, True], reversed gives
+    # [False, False, False]) -- polars' sort is internally stable, and a
+    # stable sort on a PARTIAL key is precisely the mechanism that makes
+    # output depend on input order (stability preserves whatever relative
+    # order same-day rows arrived in, rather than imposing one). Verified
+    # by reverting the fix and re-running this test before writing this
+    # docstring, not assumed.
     d = date(2020, 6, 1)
     forward = [
         _row("AAPL", "A1", "Purchase", d, amount=10000.0),

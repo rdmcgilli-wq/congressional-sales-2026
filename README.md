@@ -140,19 +140,13 @@ Known gaps in this output, all reported rather than papered over:
   fixed effect, so on a single-year subset that effect has one level and
   the estimator refuses to fit. Producing F7 needs a per-year Model 2
   variant without the year fixed effect, which does not exist yet.
-- **The Benjamini-Hochberg threshold is not computed.** `paper.md` renders
-  the un-computed case as "no result survived correction", which is a
-  stronger claim than the pipeline has actually tested. Compute the
-  Section 8 18-variant grid before publishing anything from that line.
-- **Model 1's cluster-robust SEs (member- and month-clustered, Section 7)
-  have no consumer anywhere in this pipeline.** T4 is Model 1's own output
-  shape ("Mean CAR by transaction type and horizon, all three adjustment
-  methods") but is currently a bare mean/n calculation
-  (`tables.t4_mean_car`) with no standard error and no t-stat — so nothing
-  written to `outputs/` carries proper inference on the unconditional
-  sale-vs-purchase CAR comparison, the most direct H1/H2 statistic. Decide
-  whether Model 1's output replaces T4's calculation or is reported
-  separately before publishing anything from that table.
+- **The Benjamini-Hochberg threshold is not computed.** `paper.md` now
+  renders the un-computed case as "not yet computed" and does not claim
+  anything survived or failed to survive correction. Compute the Section 8
+  18-variant grid before publishing anything from T4/T5/T7.
+- **T4 carries Model 1's member- and month-clustered SEs** (`tables.t4_mean_car`
+  is routed through `models.model1.unconditional_means_table`), satisfying
+  Section 7's "report both."
 
 The permutation test behind F6 recomputes the primary CAR 1,000 times per
 transaction and dominates the runtime; `PERMUTATION_MAX_TXNS` at the top of

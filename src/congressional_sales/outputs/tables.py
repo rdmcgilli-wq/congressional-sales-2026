@@ -40,7 +40,14 @@ def t4_mean_car(sample_with_car: pl.DataFrame) -> pl.DataFrame:
     Purchase). Routed through models.model1.unconditional_means_table,
     which already computes exactly this (Task 18, already reviewed and
     tested) -- called once per (horizon, method) car column rather than
-    inventing new statistics."""
+    inventing new statistics.
+
+    Requires `sample_with_car` to carry `bioguide_id` and `report_date`
+    (needed for member/month clustering, review finding) in addition to
+    `transaction` and the 9 `car_{method}_{horizon}` columns -- a real
+    CAR-attached sample (events.attach.attach_car_bhar's output) always
+    has both, but a caller passing a narrower ad hoc frame will get a
+    polars ColumnNotFoundError rather than a silently degraded table."""
     from ..models import model1
 
     rows = []
