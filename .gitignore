@@ -12,3 +12,6 @@ venv/
 
 # Data warehouse (regenerate from primary sources; not committed)
 data/
+
+# Pipeline outputs (regenerate via scripts/run_full_pipeline.py; not committed)
+outputs/
