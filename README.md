@@ -134,7 +134,7 @@ variant, fits Models 2 and 3, runs the robustness suite, and writes to
 | `ticker_reuse_audit.csv` | CIKs mapping to more than one ticker symbol |
 | `hand_check_worksheet.csv` | The 20-transaction worksheet for the Section 11 manual check |
 
-Two known gaps in this output, both reported rather than papered over:
+Known gaps in this output, all reported rather than papered over:
 
 - **F7 (year-by-year effect) is not generated.** Model 2 absorbs a year
   fixed effect, so on a single-year subset that effect has one level and
@@ -144,6 +144,15 @@ Two known gaps in this output, both reported rather than papered over:
   the un-computed case as "no result survived correction", which is a
   stronger claim than the pipeline has actually tested. Compute the
   Section 8 18-variant grid before publishing anything from that line.
+- **Model 1's cluster-robust SEs (member- and month-clustered, Section 7)
+  have no consumer anywhere in this pipeline.** T4 is Model 1's own output
+  shape ("Mean CAR by transaction type and horizon, all three adjustment
+  methods") but is currently a bare mean/n calculation
+  (`tables.t4_mean_car`) with no standard error and no t-stat — so nothing
+  written to `outputs/` carries proper inference on the unconditional
+  sale-vs-purchase CAR comparison, the most direct H1/H2 statistic. Decide
+  whether Model 1's output replaces T4's calculation or is reported
+  separately before publishing anything from that table.
 
 The permutation test behind F6 recomputes the primary CAR 1,000 times per
 transaction and dominates the runtime; `PERMUTATION_MAX_TXNS` at the top of

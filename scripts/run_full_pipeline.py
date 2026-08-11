@@ -23,26 +23,41 @@ from congressional_sales.sample.screens import screen1_rebalancing, screen2_tax_
 from congressional_sales.verification.audits import delisting_audit, nan_audit, ticker_reuse_audit
 from congressional_sales.verification.hand_check import build_worksheet, select_worksheet_sample
 
-# models.model1 and models.multiple_comparisons are deliberately NOT imported
-# here. Model 1's unconditional clustered means have no slot in the
-# pre-specified T1-T8 output list (Section 10) -- T4 is the mean-CAR table and
-# is produced by tables.t4_mean_car -- and emitting an extra, non-pre-specified
-# output would violate Section 8's "any specification not in that list is
-# explicitly post-hoc" discipline. multiple_comparisons feeds `bh_threshold`,
-# which this script does not yet compute (see the note at the build_paper_markdown
-# call below). Both are left out rather than imported-and-unused so that the
-# script's import list is an honest statement of what it actually runs.
+# models.model1 and models.multiple_comparisons are NOT imported here, and
+# this is a real, disclosed gap, not a settled design decision:
+#
+# Model 1 (unconditional mean CAR with member- AND month-clustered SEs,
+# Section 7) has NO consumer anywhere in this assembled pipeline. T4
+# ("Mean CAR by transaction type and horizon, all three adjustment methods",
+# Section 10) is Model 1's own output shape, but is produced here by
+# tables.t4_mean_car -- a bare mean/n calculation with no clustered SE and no
+# t-stat. The practical consequence: nothing this pipeline writes to
+# outputs/ carries cluster-robust inference on the unconditional
+# sale-vs-purchase CAR comparison, the most direct H1/H2 statistic. Whether
+# Model 1's output belongs folded into T4 (replacing tables.t4_mean_car's
+# calculation with model1.unconditional_means_table's, which computes ONE
+# horizon/method at a time rather than T4's full 3x3 grid) or reported
+# separately is an open call for whoever finalizes the paper -- not decided
+# here, because inventing a NEW output slot outside Section 10's
+# pre-specified T1-T8 list would itself violate Section 8's "any
+# specification not in that list is explicitly post-hoc" discipline. See
+# README.md's "Known gaps in this output" for the disclosure.
+#
+# multiple_comparisons feeds `bh_threshold`, which this script does not yet
+# compute (see the note at the build_paper_markdown call below).
 
 # --- Sample period constants (PRE_ANALYSIS_PLAN.md Section 4) ------------------
 # "Period: 2014 through the most recent complete year. Hold out the final 18
 # months as an untouched validation sample."
 #
 # These constants are set for a run made in 2026: the most recent COMPLETE year
-# is 2025, so the study period is 2014-01-01 .. 2025-12-31 and its final 18
-# months are 2024-07-01 .. 2025-12-31. Re-confirm and update them when the study
-# period rolls forward -- do not leave them stale and do not hardcode silently.
+# is 2025, so the study period is 2014-01-01 .. 2025-12-31 (2025-12-31 is
+# run_holdout.py's HOLDOUT_END -- this script never reads that far, since it
+# excludes the holdout window entirely, so it is not re-declared here) and its
+# final 18 months are 2024-07-01 .. 2025-12-31. Re-confirm and update them when
+# the study period rolls forward -- do not leave them stale and do not
+# hardcode silently.
 SAMPLE_PERIOD_START = date(2014, 1, 1)
-SAMPLE_PERIOD_END = date(2025, 12, 31)  # most recent complete year at time of writing
 HOLDOUT_START = date(2024, 7, 1)  # first day of the final 18 months; keep in sync with run_holdout.py
 # build_sample's period filter is INCLUSIVE on both ends (report_date >= start
 # AND report_date <= end), so the main sample must stop the day BEFORE
@@ -87,18 +102,28 @@ MIN_ALPHA_MONTHS = 12
 EXCLUSION_FLAGS = ["excluded_rebalancing", "excluded_tax_management", "excluded_liquidation"]
 
 # A canonical, total row order re-imposed on the sample after the funnel and
-# again after the screens. This is NOT cosmetic -- it is what makes Section 11's
-# "reproduce end to end twice, on different days, and confirm identical output"
-# achievable at all.
+# again after the screens. This is NOT cosmetic in either of two separate ways:
 #
-# funnel.build_sample ends in df.unique(subset=[...], keep="first") and several
-# joins, none of which pass polars' maintain_order, so the ROW ORDER of its
-# output varies from process to process. Verified empirically: three separate
-# runs of build_sample over the identical warehouse produced three different row
-# orders and therefore three different 20-transaction hand-check worksheets
-# (select_worksheet_sample is a seeded sample -- deterministic given an order,
-# but there was no stable order to give it). The same instability would reach
-# F3-F6's seeded subsamples.
+# 1. Reproducibility (Section 11's "reproduce end to end twice, on different
+#    days, and confirm identical output"). funnel.build_sample ends in
+#    df.unique(subset=[...], keep="first") and several joins, none of which
+#    pass polars' maintain_order, so the ROW ORDER of its output varies from
+#    process to process. Verified empirically: three separate runs of
+#    build_sample over the identical warehouse produced three different row
+#    orders and therefore three different 20-transaction hand-check
+#    worksheets (select_worksheet_sample is a seeded sample -- deterministic
+#    given an order, but there was no stable order to give it). The same
+#    instability would reach F3-F6's seeded subsamples.
+# 2. screen3_liquidation's own CONTENT, not just presentation. It computes
+#    cumulative net exposure via cum_sum().over("bioguide_id"), sorted only on
+#    ["bioguide_id", "transaction_date"] -- a partial key when a member has
+#    same-day transactions, which polars does not order deterministically on
+#    its own. Verified empirically: three same-day rows for one member fed in
+#    canonical vs. reversed order produced DIFFERENT excluded_liquidation
+#    flags ([F,T,T] vs [F,F,F]), not just a different row order. The sort
+#    below must run BEFORE the screens for this reason -- moving it to after
+#    the screens (e.g. during a future refactor) would silently reintroduce
+#    this as a correctness bug, not just a reproducibility one.
 #
 # These are exactly the columns the funnel deduplicates on, so after dedupe they
 # are unique and this sort is a genuine total order, not a partial one that
@@ -414,7 +439,17 @@ def main() -> None:
     alpha_result = model3.calendar_time_alpha(portfolio_returns, factors)
     t6 = tables.t6_model3(alpha_result)
 
-    robustness_table = run_robustness_suite(screened_with_car, size_proxies, terms, car_col=PRIMARY_CAR_COL)
+    # Section 9 robustness item 6: entry at filing (report) date rather than
+    # transaction date -- the actionability question. attach_car_bhar's
+    # event_date_col="report_date" variant and run_robustness_suite's
+    # filing_date_variant parameter (Tasks 22/23) exist for exactly this
+    # check; review finding: this call previously left filing_date_variant
+    # at its default None, so the check silently never ran and T7 shipped
+    # with 9 of 10 pre-specified robustness checks instead of all 10.
+    filing_date_variant = attach_car_bhar(screened, prices, factors, sic, event_date_col="report_date")
+    robustness_table = run_robustness_suite(
+        screened_with_car, size_proxies, terms, car_col=PRIMARY_CAR_COL, filing_date_variant=filing_date_variant
+    )
     # .sort("check") is a reproducibility requirement, not a formatting choice.
     # run_robustness_suite emits one row per size band by iterating
     # df["amount_range"].unique(), and polars does not pin the order of unique()
