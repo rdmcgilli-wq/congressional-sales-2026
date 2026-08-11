@@ -100,7 +100,23 @@ def screen3_liquidation(
     portfolio_liquidation_pct: float = 0.60,
     retirement_window_days: int = 90,
 ) -> pl.DataFrame:
-    df = sample.sort(["bioguide_id", "transaction_date"])
+    # Sorted on the full canonical key, not just ["bioguide_id",
+    # "transaction_date"]: cum_sum().over("bioguide_id") below needs a
+    # deterministic order WITHIN each member, and polars does not
+    # guarantee tie-stable ordering for rows sharing (bioguide_id,
+    # transaction_date) under a partial sort key (default
+    # maintain_order=False). Whole-branch review finding, verified
+    # empirically: three same-day rows for one member fed to this
+    # function in canonical vs. reversed order produced DIFFERENT
+    # excluded_liquidation flags ([F,T,T] vs [F,F,F]), not just a
+    # different row order -- this was a latent correctness dependency on
+    # every CALLER happening to pre-sort consistently (which
+    # scripts/run_full_pipeline.py and scripts/run_holdout.py do, for
+    # their own reproducibility reasons, but that was never a contract
+    # this function itself enforced). The extra columns are deterministic
+    # tie-breakers only; the semantically meaningful order is still
+    # bioguide_id then transaction_date.
+    df = sample.sort(["bioguide_id", "transaction_date", "ticker", "transaction", "amount_range"])
 
     # Sub-condition 1: cumulative net-exposure proxy.
     signed = pl.when(pl.col("transaction") == "Purchase").then(pl.col("amount_low")).otherwise(-pl.col("amount_low"))

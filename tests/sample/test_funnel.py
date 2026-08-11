@@ -142,6 +142,43 @@ def test_funnel_steps_are_monotonically_non_increasing():
         assert step.count_after <= step.count_before
 
 
+def test_directional_transaction_only_normalizes_real_sale_variants():
+    # Real Quiver data uses "Sale (Full)"/"Sale (Partial)", not a bare
+    # "Sale" string (confirmed against this study's sibling private-repo
+    # Quiver adapter, live-verified against the real API). A row with
+    # this real-world variant must survive the funnel and come out
+    # normalized to the canonical "Sale" -- not be silently dropped or
+    # left as the unnormalized variant string (which models.model2 would
+    # then code as a purchase, since it only recognizes literal "Sale").
+    report = date(2020, 6, 15)
+    _seed_trade("AAPL", "A001", report, report, 1001.0, transaction="Sale (Partial)")
+    prices = _trading_dates(date(2019, 1, 1), 300) + _trading_dates(date(2020, 6, 16), 200)
+    _seed_prices("AAPL", prices)
+    result = funnel.build_sample(period_start=date(2020, 1, 1), period_end=date(2020, 12, 31))
+    step = next(s for s in result.steps if s.name == "directional_transaction_only")
+    assert step.count_before == 1
+    assert step.count_after == 1
+    assert result.sample["transaction"].to_list() == ["Sale"]
+
+
+def test_directional_transaction_only_excludes_exchanges_and_transfers():
+    # PRE_ANALYSIS_PLAN.md Section 4: "Exchanges and transfers (not
+    # directional decisions)" are excluded. Whitelist, not blacklist --
+    # this must exclude ANY value that isn't Purchase/Sale(-variant),
+    # without needing to know Quiver's exact string for an exchange or
+    # transfer in advance.
+    report = date(2020, 6, 15)
+    _seed_trade("AAPL", "A001", report, report, 1001.0, transaction="Purchase")
+    _seed_trade("AAPL", "A002", report, report, 1001.0, transaction="Exchange")
+    prices = _trading_dates(date(2019, 1, 1), 300) + _trading_dates(date(2020, 6, 16), 200)
+    _seed_prices("AAPL", prices)
+    result = funnel.build_sample(period_start=date(2020, 1, 1), period_end=date(2020, 12, 31))
+    step = next(s for s in result.steps if s.name == "directional_transaction_only")
+    assert step.count_before == 2
+    assert step.count_after == 1
+    assert result.sample["bioguide_id"].to_list() == ["A001"]
+
+
 def test_period_filter_excludes_trades_outside_the_sample_window():
     _seed_trade("AAPL", "A001", date(2013, 6, 15), date(2013, 6, 15), 1001.0)  # before period_start
     _seed_prices("AAPL", _trading_dates(date(2012, 1, 1), 300))

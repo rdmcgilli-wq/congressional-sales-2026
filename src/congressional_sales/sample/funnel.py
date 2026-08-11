@@ -5,6 +5,23 @@ Not implemented as a separate filter (documented, not a silent gap):
 Quiver's feed has no filer-relationship field (self/spouse/dependent
 child) -- every disclosed transaction already covers all three by legal
 definition of what a PTR filing is, so there is nothing to filter here.
+
+Section 4's "Exchanges and transfers (not directional decisions)"
+exclusion IS implemented, via directional_transaction_only below --
+found missing entirely (whole-branch review, not any single task review:
+Task 8's own brief dropped this bullet when the plan was decomposed into
+task briefs, so no task-scoped review could see the gap). Confirmed
+against this study's own sibling private-repo Quiver adapter (live-
+verified against the real API earlier in this project's development,
+2,655 real disclosures) that the real Transaction field is NOT limited
+to the literal strings "Purchase"/"Sale" -- it includes at least
+"Sale (Full)"/"Sale (Partial)" variants, and models.model2's original
+`"sale": 1 if row["transaction"] == "Sale" else 0` coding would have
+silently coded every one of those real rows as a PURCHASE, contaminating
+the comparison group of the single pre-registered primary test. Fixed
+here (normalize Sale variants, exclude anything that isn't Purchase or
+Sale) and in models/model2.py (fail loud instead of silently defaulting,
+as a safety net for any caller that bypasses this funnel).
 """
 
 from __future__ import annotations
@@ -54,6 +71,27 @@ def build_sample(
     stock_only = df.filter(pl.col("ticker_type") == "ST")
     _step(steps, "common_stock_only", df, stock_only)
     df = stock_only
+
+    # Section 4: "Exchanges and transfers (not directional decisions)" are
+    # excluded. Real Quiver data uses Sale variants ("Sale (Full)",
+    # "Sale (Partial)") rather than a bare "Sale" string -- normalize any
+    # value starting with "Sale" to the canonical "Sale" first (every
+    # downstream consumer treats sales as one category; no task in this
+    # plan distinguishes full vs. partial), THEN keep only
+    # {"Purchase", "Sale"}. This is a whitelist, not a blacklist, so it
+    # excludes "Exchange"/"Transfer"/anything else without needing to know
+    # Quiver's exact string for them in advance -- the failure mode for an
+    # unanticipated value is exclusion-with-a-logged-count, never silent
+    # inclusion.
+    normalized = df.with_columns(
+        pl.when(pl.col("transaction").str.starts_with("Sale"))
+        .then(pl.lit("Sale"))
+        .otherwise(pl.col("transaction"))
+        .alias("transaction")
+    )
+    directional = normalized.filter(pl.col("transaction").is_in(["Purchase", "Sale"]))
+    _step(steps, "directional_transaction_only", df, directional)
+    df = directional
 
     above_threshold = df.filter(pl.col("amount_low") > 1000.0)
     _step(steps, "above_statutory_threshold", df, above_threshold)

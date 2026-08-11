@@ -13,5 +13,11 @@ venv/
 # Data warehouse (regenerate from primary sources; not committed)
 data/
 
-# Pipeline outputs (regenerate via scripts/run_full_pipeline.py; not committed)
-outputs/
+# Pipeline outputs (regenerate via scripts/run_full_pipeline.py; not
+# committed). Anchored to the repo root (leading /) -- unanchored "outputs/"
+# would also match src/congressional_sales/outputs/ and tests/outputs/,
+# the real source packages for Tasks 24/25/26 and their tests, silently
+# hiding any NEW file added there from `git add -A`/`git add .` (caught
+# during the whole-branch review: `git add` on those directories' already-
+# tracked files warned "ignored by one of your .gitignore files").
+/outputs/

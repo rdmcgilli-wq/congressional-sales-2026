@@ -179,3 +179,33 @@ def test_screen3_does_not_flag_a_sitting_members_transaction():
     terms = _terms("A1", "rep", date(2015, 1, 1), date(2027, 1, 3))  # term ends far in the future
     out = screens.screen3_liquidation(rows, terms)
     assert out["excluded_liquidation"][0] is False
+
+
+def test_screen3_result_is_invariant_to_input_row_order_for_same_day_transactions():
+    # Whole-branch review finding: this function's internal sort
+    # (["bioguide_id", "transaction_date"]) is a PARTIAL key when a member
+    # has same-day transactions -- polars' default maintain_order=False
+    # does not guarantee tie-stable ordering, so cum_sum().over(...) could
+    # see same-day rows in a different relative order depending on how
+    # they arrived, silently changing which row "sees" the prior exposure
+    # from the others and therefore changing excluded_liquidation's
+    # actual value (not just row order). Regression/contract guard: feed
+    # the identical three same-day rows in forward and reversed order and
+    # assert byte-identical flags either way. This is a total-order
+    # contract test, not a mutation-proof against the old partial-key
+    # code -- polars' observed sort behavior happens to be stable for
+    # inputs this small on this build (confirmed empirically before
+    # writing this test), so this guards against a future regression
+    # (e.g. a refactor dropping the extended sort key, a different
+    # polars version, or a larger real dataset) rather than reproducing
+    # today's exact failure.
+    d = date(2020, 6, 1)
+    forward = [
+        _row("AAPL", "A1", "Purchase", d, amount=10000.0),
+        _row("MSFT", "A1", "Sale", d, amount=8000.0),
+        _row("GOOG", "A1", "Sale", d, amount=100.0),
+    ]
+    terms = _terms("A1", "rep", date(2015, 1, 1), date(2025, 1, 1))
+    out_forward = screens.screen3_liquidation(_df(forward), terms).sort("ticker")
+    out_reversed = screens.screen3_liquidation(_df(list(reversed(forward))), terms).sort("ticker")
+    assert out_forward["excluded_liquidation"].to_list() == out_reversed["excluded_liquidation"].to_list()

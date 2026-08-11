@@ -486,18 +486,21 @@ def main() -> None:
 
     figure_paths = _write_figures(result, screened, prices, factors, portfolio_returns)
 
-    # bh_threshold=None: the Benjamini-Hochberg correction across Section 8's 18
-    # pre-specified variants (3 horizons x 3 adjustment methods x 2 samples) is
-    # NOT yet computed by this script -- it needs a p-value from each of 18
-    # Model 2 runs, and no task in this build produces that grid.
-    # WARNING for whoever reads the generated paper.md: outputs.paper renders
-    # None as "no result survived correction", which is a substantive claim this
-    # pipeline has not actually tested. Compute the grid (or change that
-    # rendering) before publishing.
+    # bh_threshold=None, bh_computed=False: the Benjamini-Hochberg correction
+    # across Section 8's 18 pre-specified variants (3 horizons x 3 adjustment
+    # methods x 2 samples) is NOT yet computed by this script -- it needs a
+    # p-value from each of 18 Model 2 runs, and no task in this build produces
+    # that grid. bh_computed=False tells build_paper_markdown to render this
+    # honestly ("not yet computed") rather than as a "no result survived
+    # correction" finding, which would be a false substantive claim about a
+    # test this pipeline has never run (whole-branch review finding -- the
+    # old unconditional wording rendered exactly that false claim into the
+    # generated paper.md). Compute the grid before publishing.
     md = paper.build_paper_markdown(
         {"T1": t1, "T2": t2, "T3": t3, "T4": t4, "T5": t5, "T6": t6, "T7": t7},
         figure_paths,
         bh_threshold=None,
+        bh_computed=False,
     )
     (storage.paths().outputs / "paper.md").write_text(md)
     print(f"Wrote outputs to {storage.paths().outputs}")

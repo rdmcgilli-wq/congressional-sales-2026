@@ -110,3 +110,42 @@ def test_run_robustness_suite_produces_one_row_per_check_and_the_full_sample():
     full_row = result.filter(pl.col("check") == "full_screened_sample")
     assert full_row["beta_sale"][0] is not None
     assert full_row["n"][0] == 80
+
+
+def test_run_robustness_suite_omits_filing_date_entry_when_no_variant_is_passed():
+    sample, terms, size_proxies = _robustness_fixture()
+    result = robustness.run_robustness_suite(sample, size_proxies, terms)
+    assert "filing_date_entry" not in result["check"].to_list()
+
+
+def test_run_robustness_suite_includes_filing_date_entry_when_a_variant_is_passed():
+    # Section 9 robustness item 6: entry at filing (report) date rather
+    # than transaction date. Whole-branch review finding: this check was
+    # wired into scripts/run_full_pipeline.py but had zero test coverage
+    # anywhere in this suite. Confirm the row appears when a variant is
+    # supplied, and confirm it's genuinely computed from the VARIANT's
+    # own car_four_factor_90 column -- not silently reusing
+    # full_screened_sample's number -- by giving the variant deliberately
+    # different CAR values and asserting the resulting beta differs.
+    # A constant shift to every row's CAR would NOT move beta_sale (OLS/FE
+    # coefficients on other regressors are invariant to a constant additive
+    # shift in the dependent variable -- only the intercept moves), so the
+    # perturbation is applied only to Sale rows specifically, to actually
+    # move the treatment-group estimate.
+    sample, terms, size_proxies = _robustness_fixture()
+    filing_date_variant = sample.with_columns(
+        pl.when(pl.col("transaction") == "Sale")
+        .then(pl.col("car_four_factor_90") + 5.0)
+        .otherwise(pl.col("car_four_factor_90"))
+        .alias("car_four_factor_90")
+    )
+
+    result = robustness.run_robustness_suite(sample, size_proxies, terms, filing_date_variant=filing_date_variant)
+    labels = set(result["check"].to_list())
+    assert "filing_date_entry" in labels
+
+    filing_row = result.filter(pl.col("check") == "filing_date_entry")
+    full_row = result.filter(pl.col("check") == "full_screened_sample")
+    assert filing_row["beta_sale"][0] is not None
+    assert filing_row["n"][0] == 80
+    assert filing_row["beta_sale"][0] != pytest.approx(full_row["beta_sale"][0])

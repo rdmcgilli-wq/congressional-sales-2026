@@ -121,6 +121,27 @@ def build_model2_frame(
 
     rows = []
     for row in sample_with_car.iter_rows(named=True):
+        # Fail loud on an unrecognized transaction value rather than
+        # silently coding it as a purchase (`1 if == "Sale" else 0`'s
+        # original behavior). sample.funnel.build_sample's
+        # directional_transaction_only step already normalizes real
+        # Quiver Sale variants ("Sale (Full)"/"Sale (Partial)") to "Sale"
+        # and excludes anything that isn't Purchase/Sale (Section 4's
+        # "exchanges and transfers" exclusion) -- so this should never
+        # fire on a sample that went through the funnel. It exists as a
+        # safety net for a caller that bypasses the funnel, since a
+        # silent default here would contaminate the comparison group of
+        # this study's single pre-registered primary test (found during
+        # the whole-branch review, not any single task review).
+        if row["transaction"] not in ("Purchase", "Sale"):
+            raise ValueError(
+                f"Unrecognized transaction value {row['transaction']!r} for "
+                f"{row['ticker']}/{row['bioguide_id']} reached build_model2_frame -- "
+                "expected exactly 'Purchase' or 'Sale'. Run the sample through "
+                "sample.funnel.build_sample first; its directional_transaction_only "
+                "step normalizes Sale variants and excludes non-directional "
+                "transactions (exchanges/transfers, Section 4)."
+            )
         size = size_proxies.get((row["ticker"], row["report_date"]))
         rows.append(
             {

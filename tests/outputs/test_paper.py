@@ -23,3 +23,15 @@ def test_build_paper_markdown_includes_every_table_and_figure_and_the_limitation
 def test_build_paper_markdown_handles_missing_bh_threshold():
     md = paper.build_paper_markdown({}, {}, bh_threshold=None)
     assert "no result survived" in md.lower()
+
+
+def test_build_paper_markdown_distinguishes_not_computed_from_zero_survived():
+    # Whole-branch review finding: bh_threshold=None is ambiguous between
+    # "the correction was run and nothing survived" (a real finding) and
+    # "the correction was never run at all" -- the old unconditional "no
+    # result survived correction" wording rendered a false claim for the
+    # second case. bh_computed=False must say something different, and
+    # must NOT claim anything survived or failed to survive.
+    md = paper.build_paper_markdown({}, {}, bh_threshold=None, bh_computed=False)
+    assert "not yet computed" in md.lower()
+    assert "no result survived" not in md.lower()

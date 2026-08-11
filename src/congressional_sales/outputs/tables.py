@@ -30,19 +30,30 @@ def t3(sample: pl.DataFrame) -> pl.DataFrame:
 
 
 def t4_mean_car(sample_with_car: pl.DataFrame) -> pl.DataFrame:
+    """Whole-branch review finding: T4 is Model 1's own output shape
+    ("Mean CAR by transaction type and horizon, all three adjustment
+    methods", Section 10) and Section 7 requires it be reported WITH
+    member- and month-clustered standard errors -- "Report both." The
+    original implementation computed a bare mean/n with no inference at
+    all, so nothing in this pipeline's output could support or refute
+    H1/H2 (whether mean CAR differs from zero, or Sale differs from
+    Purchase). Routed through models.model1.unconditional_means_table,
+    which already computes exactly this (Task 18, already reviewed and
+    tested) -- called once per (horizon, method) car column rather than
+    inventing new statistics."""
+    from ..models import model1
+
     rows = []
-    for txn_type in ("Sale", "Purchase"):
-        subset = sample_with_car.filter(pl.col("transaction") == txn_type)
-        if subset.is_empty():
-            continue
-        for h in HORIZONS:
-            for m in METHODS:
-                col = f"car_{m}_{h}"
-                values = subset[col].drop_nulls()
+    for h in HORIZONS:
+        for m in METHODS:
+            car_col = f"car_{m}_{h}"
+            means = model1.unconditional_means_table(sample_with_car, car_col=car_col)
+            for row in means.iter_rows(named=True):
                 rows.append(
                     {
-                        "transaction": txn_type, "horizon": h, "method": METHOD_LABELS[m],
-                        "mean_car": float(values.mean()) if values.len() else None, "n": values.len(),
+                        "transaction": row["transaction"], "horizon": h, "method": METHOD_LABELS[m],
+                        "mean_car": row["mean"], "se_member": row["se_member"], "se_month": row["se_month"],
+                        "n": row["n"],
                     }
                 )
     return pl.DataFrame(rows)

@@ -239,6 +239,23 @@ def test_build_model2_frame_drops_rows_with_null_prior_12mo_return():
     assert out["bioguide_id"][0] == "A1"
 
 
+@pytest.mark.parametrize("bad_value", ["Sale (Partial)", "Exchange", "sale", ""])
+def test_build_model2_frame_raises_on_unrecognized_transaction_value(bad_value):
+    # Whole-branch review finding: the original code did
+    # `1 if row["transaction"] == "Sale" else 0`, which silently coded
+    # ANY non-"Sale" value -- including real Quiver Sale variants like
+    # "Sale (Partial)" that sample.funnel.build_sample is now responsible
+    # for normalizing before a frame ever reaches here -- as a purchase,
+    # contaminating the primary test's comparison group. A caller that
+    # bypasses the funnel (as this test deliberately does) must get a
+    # loud, actionable error instead.
+    sample = _car_sample(transaction=[bad_value])
+    with pytest.raises(ValueError, match="Unrecognized transaction value"):
+        model2.build_model2_frame(
+            sample, size_proxies={("AAPL", date(2020, 6, 1)): 100_000.0}, terms=_terms(), car_col="car"
+        )
+
+
 def _terms() -> pl.DataFrame:
     return pl.DataFrame(
         {
