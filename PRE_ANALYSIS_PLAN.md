@@ -280,3 +280,75 @@ Fix these now:
 - No investment recommendation.
 
 Write these into the paper's limitations section explicitly.
+
+---
+
+## Addendum A (2026-08-11): Ticker universe rule
+
+**Committed:** 2026-08-11 (pre-analysis — see status note below)
+**Author:** Ryan McGillicuddy
+**Status:** Committed before any universe-wide data ingestion. The only
+ingestion performed as of this addendum is a four-ticker mechanical
+pipeline check (AAPL, MSFT, NVDA, SPY) run to validate the codebase end
+to end on live data, not to test any hypothesis — no result from that
+check informed this rule. This addendum does not edit Section 3 or
+Section 4 above; both remain as committed in v1.0.
+
+**Rule.** The study's ticker universe is disclosure-defined, not
+index-defined: it is the full set of distinct ticker symbols named in
+any congressional financial disclosure filed within the sample period
+(2014-01-01 through the most recent complete year), discovered via
+Quiver Quantitative's bulk congressional-trading endpoint
+(`/beta/bulk/congresstrading`), not assumed from S&P 500, Russell 3000,
+or any other index membership list. A ticker enters the universe if and
+only if at least one disclosure names it during the sample period.
+Common-stock-only filtering and every other Section 4 inclusion/exclusion
+criterion are applied AFTER universe discovery, to each ticker's own
+subsequently-ingested per-ticker data, exactly as already specified in
+Section 4 — this rule determines which tickers get pulled, not which
+transactions survive the funnel. That determination remains entirely
+Section 4's, unchanged.
+
+**Reasoning.** An index-defined universe (e.g., current S&P 500 or
+Russell 3000 constituents) was rejected for two compounding reasons.
+First, it is itself survivorship-biased in exactly the way Section 3's
+already-documented price-data deviation is: a company removed from a
+major index because it was acquired at a discount, delisted, or went
+bankrupt would be excluded from the universe entirely, for the same
+underlying reason its price history disappears from the feed — deleting
+the same category of evidence twice, once at the sample-construction
+stage and once at the price-data stage, both times against the
+strongest instances of H1. Second, an index-defined universe would
+silently exclude any ticker a member genuinely disclosed trading, with
+no way to distinguish "never traded" from "traded, but outside the
+index we chose" — an unlogged exclusion happening before the funnel
+ever sees the data, which contradicts Section 4's own "log every
+exclusion with a count" requirement. A disclosure-defined universe has
+neither problem: it is mechanically determined by the actual disclosed
+transactions the study is about, requires no external membership list
+or cutoff date for index composition, and changes nothing about which
+individual trades are included or excluded — Section 4's screens apply
+identically once the universe is fixed by this rule.
+
+Verified live on the date of this addendum, not assumed: the bulk
+endpoint returns the full historical dataset in a single call (114,951
+disclosure records total, no pagination required); restricted to
+disclosures filed within the sample period alone, it yields 5,046
+distinct ticker symbols. An index-defined universe would have covered
+roughly 500 (S&P 500) to 3,000 (Russell 3000) of these at most, which
+concretely bounds the scale of what that alternative would have missed.
+The bulk endpoint's own `TickerType` field uses a broader, less
+consistent vocabulary than the per-ticker ingestion endpoint this
+project already relies on for common-stock filtering (`ST` there;
+several additional labels including a separate `Stock` value in the
+bulk feed) — the bulk pull is used here only to discover ticker
+*symbols*, not to classify them; every discovered symbol still goes
+through the existing, already-reviewed per-ticker ingestion and Section
+4 funnel exactly as any manually-chosen ticker would.
+
+With this addendum committed, the specification governing sample
+construction is closed: the ticker universe, the inclusion/exclusion
+funnel, the screens, the outcome variables, the models, and the output
+list are now all fixed before any universe-wide analysis has been run.
+Any further change is post-hoc by construction and must be reported as
+such.
