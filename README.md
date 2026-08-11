@@ -194,11 +194,12 @@ months, which nothing above has touched. Run it once, after everything else
 is final, and report what it says. If it reveals a methodology problem, log
 that as a limitation — do not patch the pipeline and re-run it.
 
-The sample-period constants (`SAMPLE_PERIOD_START`, `HOLDOUT_START`,
-`HOLDOUT_END`) are duplicated at the top of both scripts and must be kept in
-sync. They currently encode a 2026 run: study period 2014-01-01 through
-2025-12-31 (the most recent complete year), holdout 2024-07-01 through
-2025-12-31. Re-confirm them whenever the study period rolls forward.
+The sample-period constants (`SAMPLE_PERIOD_START` and `HOLDOUT_START`, which
+appear in both scripts, plus `HOLDOUT_END`, which only `run_holdout.py`
+needs) must be kept in sync across the two files. They currently encode a
+2026 run: study period 2014-01-01 through 2025-12-31 (the most recent
+complete year), holdout 2024-07-01 through 2025-12-31. Re-confirm them
+whenever the study period rolls forward.
 
 ## License
 
