@@ -149,3 +149,56 @@ def test_run_robustness_suite_includes_filing_date_entry_when_a_variant_is_passe
     assert filing_row["beta_sale"][0] is not None
     assert filing_row["n"][0] == 80
     assert filing_row["beta_sale"][0] != pytest.approx(full_row["beta_sale"][0])
+
+
+def test_year_by_year_effects_has_one_row_per_calendar_year_present():
+    sample, terms, size_proxies = _robustness_fixture()
+    result = robustness.year_by_year_effects(sample, size_proxies, terms, car_col="car_four_factor_90")
+    expected_years = sorted(sample["report_date"].dt.year().unique().to_list())
+    assert result["year"].to_list() == expected_years
+
+
+def test_year_by_year_effects_fits_a_well_populated_year_with_a_real_ci():
+    # Concentrate every row into a single, well-populated year so this test
+    # doesn't depend on the fixture's random per-year row counts clearing
+    # the >=10-row floor by chance. Spread across DISTINCT dates within
+    # that one year, not one shared date -- report_date also drives
+    # build_model2_frame's seniority_terms lookup, and collapsing every
+    # row of a member's own transactions onto one identical date makes
+    # seniority_terms member-constant, perfectly collinear with the
+    # already-absorbed MemberFE (a real, if incidental, AbsorbingEffectError
+    # this test tripped over before this comment was written).
+    sample, terms, size_proxies = _robustness_fixture()
+    n = sample.height
+    new_dates = [date(2019, 1, 1) + timedelta(days=i % 300) for i in range(n)]
+    old_report_dates = sample["report_date"].to_list()
+    tickers = sample["ticker"].to_list()
+    sample = sample.with_columns(pl.Series("report_date", new_dates))
+    # size_proxies is keyed on (ticker, report_date) from the ORIGINAL random
+    # dates -- rekey it to each row's new date or build_model2_frame's
+    # log_size lookup misses on every row and silently drops the whole frame.
+    old_to_new = dict(zip(zip(tickers, old_report_dates), new_dates))
+    size_proxies = {
+        (ticker, old_to_new[(ticker, old_date)]): v
+        for (ticker, old_date), v in size_proxies.items()
+        if (ticker, old_date) in old_to_new
+    }
+    result = robustness.year_by_year_effects(sample, size_proxies, terms, car_col="car_four_factor_90")
+    assert result.height == 1
+    row = result.row(0, named=True)
+    assert row["year"] == 2019
+    assert row["beta_sale"] is not None
+    assert row["ci_lower"] < row["beta_sale"] < row["ci_upper"]
+    assert row["ci_lower"] == pytest.approx(row["beta_sale"] - 1.96 * row["se_sale"])
+    assert row["n"] == 80
+
+
+def test_year_by_year_effects_reports_none_row_for_a_too_thin_year():
+    sample, terms, size_proxies = _robustness_fixture()
+    thin_year = sample.head(3).with_columns(pl.date(2099, 1, 1).alias("report_date"))
+    result = robustness.year_by_year_effects(thin_year, size_proxies, terms, car_col="car_four_factor_90")
+    assert result.height == 1
+    row = result.row(0, named=True)
+    assert row["year"] == 2099
+    assert row["beta_sale"] is None
+    assert row["n"] == 3

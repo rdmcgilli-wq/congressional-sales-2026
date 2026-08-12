@@ -62,27 +62,20 @@ The warehouse lives in `data/` by default. Set `CONGRESS_SALES_HOME` to
 redirect it somewhere else (an external disk, a scratch dir for a trial
 run); `outputs/` is always written to the repository root regardless.
 
-### 3. Decide the ticker universe — do this before ingesting
+### 3. Discover the ticker universe — do this before ingesting
 
-**This is a sample-selection decision that must be recorded in the paper,
-not a technical detail.** `ingest_congress_trades(ticker)` fetches one
-ticker at a time, so the set of tickers you ingest *is* the study
-universe, and any name Congress traded outside it is silently absent from
-the sample rather than logged as an exclusion.
-
-Two defensible options:
-
-- **(a) Bulk discovery.** Quiver exposes a no-ticker-filter bulk endpoint
-  (`https://api.quiverquant.com/beta/bulk/congresstrading`) that yields the
-  complete traded universe. It is referenced in Quiver's own SDK but was
-  never called during planning, and is not wired into
-  `sources/quiver.py` — verify its response shape and pagination behavior
-  with a single manual call before relying on it.
-- **(b) Seed from a broad index.** Use S&P 500 + Russell 3000 constituents
-  and accept that names traded outside that universe are missed.
-
-Whichever you choose, state it explicitly in the paper's
-sample-construction section, per Section 4 of the pre-analysis plan.
+**Resolved by `PRE_ANALYSIS_PLAN.md` Addendum A (2026-08-11): this is no
+longer an open decision.** The universe is disclosure-defined, not
+index-defined. Discover it via Quiver's bulk endpoint
+(`https://api.quiverquant.com/beta/bulk/congresstrading`, verified live:
+single call, no pagination, full historical dataset), restricted to
+disclosures filed within the sample period, then ingest each distinct
+ticker symbol it returns through the normal per-ticker pipeline below —
+this bulk pull is used only to discover symbols, never to classify them
+(the per-ticker endpoint's own `TickerType` field still governs the
+common-stock filter in Section 4). See Addendum A for the full reasoning
+and the live-verified counts (114,951 disclosure records; 5,046 distinct
+tickers within the sample period).
 
 ### 4. Ingest
 
@@ -127,30 +120,40 @@ variant, fits Models 2 and 3, runs the robustness suite, and writes to
 
 | File | Contents |
 | --- | --- |
-| `paper.md` | Tables T1–T7 and links to every generated figure |
-| `f1_sample_funnel.png` … `f8_calendar_time_alpha.png` | Figures F1–F6, F8 |
+| `paper.md` | Tables T1–T7 and links to every generated figure; `run_holdout.py` appends Table T8 later, once, if run afterward |
+| `f1_sample_funnel.png` … `f8_calendar_time_alpha.png` | Figures F1–F5, F7, F8 (F6 only if at least one permutation iteration produced a usable value; F7 only if at least 2 calendar years fit) |
 | `nan_audit.csv` | Per-column null accounting for every CAR/BHAR variant |
 | `delisting_audit.csv` | Tickers whose price history ends well before the sample does |
 | `ticker_reuse_audit.csv` | CIKs mapping to more than one ticker symbol |
 | `hand_check_worksheet.csv` | The 20-transaction worksheet for the Section 11 manual check |
+| `bh_correction_grid.csv` | All 18 Section 8 (horizon, method, sample) cells: beta_sale, se, p-value, n -- the raw grid the reported BH threshold is computed from |
+| `t8_holdout.csv` | Written by `run_holdout.py`, not this script -- Section 9 item 10's holdout result |
 
 Known gaps in this output, all reported rather than papered over:
 
-- **F7 (year-by-year effect) is not generated.** Model 2 absorbs a year
-  fixed effect, so on a single-year subset that effect has one level and
-  the estimator refuses to fit. Producing F7 needs a per-year Model 2
-  variant without the year fixed effect, which does not exist yet.
-- **The Benjamini-Hochberg threshold is not computed.** `paper.md` now
-  renders the un-computed case as "not yet computed" and does not claim
-  anything survived or failed to survive correction. Compute the Section 8
-  18-variant grid before publishing anything from T4/T5/T7.
+- **F7 (year-by-year effect)** is generated via
+  `robustness.year_by_year_effects`, which refits Model 2 per calendar year
+  with `absorb_year=False` (YearFE is degenerate -- constant, one level --
+  on any single-year subset, and controls for nothing there anyway).
+  A year too thin, or degenerate even without YearFE, is skipped rather than
+  plotted as a fabricated point; if fewer than 2 years fit, F7 itself is
+  skipped and the script says so.
+- **The Benjamini-Hochberg threshold is computed**, via
+  `models.multiple_comparisons.run_eighteen_variant_grid` fitting all 18
+  pre-specified cells and feeding their p-values to `bh_corrected_threshold`.
+  Any cell too thin or FE-degenerate to fit reports a None row in
+  `bh_correction_grid.csv` rather than crashing the whole grid, and the
+  script prints how many of the 18 cells actually produced a p-value.
 - **T4 carries Model 1's member- and month-clustered SEs** (`tables.t4_mean_car`
   is routed through `models.model1.unconditional_means_table`), satisfying
   Section 7's "report both."
-
-The permutation test behind F6 recomputes the primary CAR 1,000 times per
-transaction and dominates the runtime; `PERMUTATION_MAX_TXNS` at the top of
-the script caps how many transactions it resamples.
+- **F6's permutation test is capped** at `PERMUTATION_MAX_TXNS` transactions
+  (50 by default), a permanent, documented deviation from Section 8's
+  literal "the same tickers" -- not a TODO to lift later, kept because an
+  uncapped run recomputes the primary CAR 1,000 times per transaction and
+  dominates the pipeline's runtime on a full-scale sample. Set it to `None`
+  in `scripts/run_full_pipeline.py` for a specific run if compute budget
+  allows the full screened-sale set instead.
 
 ### 6. Verify (Section 11)
 
@@ -187,6 +190,12 @@ Section 9 item 10: this re-runs the primary specification on the final 18
 months, which nothing above has touched. Run it once, after everything else
 is final, and report what it says. If it reveals a methodology problem, log
 that as a limitation — do not patch the pipeline and re-run it.
+
+Writes `outputs/t8_holdout.csv` (Table T8) and appends a "## Table T8"
+section to `outputs/paper.md` if that file already exists from step 5.
+Running this script a second time appends a second T8 section rather than
+replacing the first — consistent with "run once," not a guard this script
+adds on top of it.
 
 The sample-period constants (`SAMPLE_PERIOD_START` and `HOLDOUT_START`, which
 appear in both scripts, plus `HOLDOUT_END`, which only `run_holdout.py`

@@ -14,9 +14,9 @@ from congressional_sales import storage
 from congressional_sales.events import car
 from congressional_sales.events.attach import attach_car_bhar
 from congressional_sales.events.permutation import random_control_test
-from congressional_sales.models import model2, model3
+from congressional_sales.models import model2, model3, multiple_comparisons
 from congressional_sales.outputs import figures, paper, tables
-from congressional_sales.robustness import run_robustness_suite
+from congressional_sales.robustness import run_robustness_suite, year_by_year_effects
 from congressional_sales.sample import classify, descriptive
 from congressional_sales.sample.funnel import build_sample
 from congressional_sales.sample.screens import screen1_rebalancing, screen2_tax_management, screen3_liquidation
@@ -36,9 +36,11 @@ from congressional_sales.verification.hand_check import build_worksheet, select_
 # Model 1's output shape and adding its pre-registered SEs to it is not a
 # new, post-hoc specification.
 #
-# models.multiple_comparisons is NOT imported: it feeds `bh_threshold`,
-# which this script does not yet compute (see the note at the
-# build_paper_markdown call below).
+# models.multiple_comparisons.run_eighteen_variant_grid fits Section 8's
+# full 18-cell (horizon x method x sample) grid and feeds bh_adjust /
+# bh_corrected_threshold below -- see the note at the build_paper_markdown
+# call for why this matters: without it, no result this pipeline produces
+# could be certified as "supportive" under Section 12's own rule.
 
 # --- Sample period constants (PRE_ANALYSIS_PLAN.md Section 4) ------------------
 # "Period: 2014 through the most recent complete year. Hold out the final 18
@@ -78,10 +80,13 @@ SUBSAMPLE_SEED = 42
 # F6's permutation test (Section 8) is pre-registered at 1,000 iterations. Each
 # iteration recomputes the primary four-factor CAR for every transaction in the
 # set, so the transaction set is capped: 1,000 x N four-factor CAR computations
-# is the binding cost. Set PERMUTATION_MAX_TXNS = None to run the full screened
-# sale set (correct, but hours of compute on a full-scale sample); the cap is a
-# documented deviation from Section 8's "the same tickers" and must be reported
-# as such alongside F6.
+# is the binding cost -- uncapped, that's hours of compute on a full-scale
+# sample with no automated test able to exercise it end to end in reasonable
+# time. Decided, not left open: keep the cap as a PERMANENT, documented
+# deviation from Section 8's literal "the same tickers" -- reported in
+# outputs/paper.py's LIMITATIONS block on every run, not a TODO to lift later.
+# Set PERMUTATION_MAX_TXNS = None to run the full screened-sale set instead,
+# if a specific run's compute budget allows it.
 PERMUTATION_MAX_TXNS: int | None = 50
 PERMUTATION_ITERATIONS = 1000
 PERMUTATION_SEED = 42  # Section 11 reproducibility: an unseeded permutation
@@ -239,9 +244,12 @@ def _save(fig, key: str, filename: str, figure_paths: dict[str, str]) -> None:
 def _write_figures(
     result,
     screened: pl.DataFrame,
+    screened_with_car: pl.DataFrame,
     prices: pl.DataFrame,
     factors: pl.DataFrame,
     portfolio_returns: pl.DataFrame,
+    size_proxies: dict,
+    terms: pl.DataFrame,
 ) -> dict[str, str]:
     """Generate and save F1-F8 (Section 10). Returns {figure key -> filename}.
 
@@ -315,25 +323,29 @@ def _write_figures(
         else:
             print("  F6 SKIPPED: no permutation iteration produced a usable simulated mean.")
 
-    # F7 (year-by-year effect, Section 9 robustness item 2) is NOT generated,
-    # and this is a deliberate, reported gap rather than an oversight.
-    #
-    # F7 needs beta_sale re-estimated within each calendar year. Model 2 absorbs
-    # [bioguide_id, year, industry]; on any single-year subset the `year`
-    # absorber collapses to exactly ONE level and pyhdfe (via
-    # linearmodels.AbsorbingLS) raises "All fixed effects after the first one
-    # should have more than one level." -- confirmed empirically against the
-    # installed linearmodels before this script was written, on a panel already
-    # known to estimate cleanly in full. This is structural, not a small-sample
-    # accident: EVERY year fails, on every dataset, by construction. A defensive
-    # per-year loop here would therefore be guaranteed dead code producing an
-    # empty figure.
-    #
-    # Generating F7 requires a per-year Model 2 variant that omits the year
-    # fixed effect (year is constant within the subset, so it controls for
-    # nothing there anyway). That is a new estimator and belongs in
-    # models/model2.py or robustness.py -- reviewed as analysis code -- not
-    # improvised inside an orchestration script. Flagged for the next task.
+    # F7 (year-by-year effect, Section 9 robustness item 2): beta_sale
+    # re-estimated within each calendar year via
+    # robustness.year_by_year_effects, which fits model2.run_model2(...,
+    # absorb_year=False) per year -- YearFE is degenerate on a single-year
+    # subset (constant, one level) and controls for nothing there anyway;
+    # MemberFE and IndustryFE remain absorbed exactly as in the primary
+    # specification. Only years that actually fit (non-null beta_sale) are
+    # plotted; a too-thin or degenerate year reports a None row there and is
+    # dropped here rather than plotted as a fabricated zero-width point.
+    year_effects = year_by_year_effects(screened_with_car, size_proxies, terms, car_col=PRIMARY_CAR_COL)
+    fitted_years = year_effects.filter(pl.col("beta_sale").is_not_null())
+    if fitted_years.height >= 2:
+        _save(
+            figures.f7_year_by_year_effect(
+                fitted_years["year"].to_list(), fitted_years["beta_sale"].to_list(),
+                fitted_years["ci_lower"].to_list(), fitted_years["ci_upper"].to_list(),
+            ),
+            "F7", "f7_year_by_year_effect.png", figure_paths,
+        )
+    else:
+        print(f"  F7 SKIPPED: only {fitted_years.height} of {year_effects.height} calendar years in the "
+              "screened sample fit the primary specification (too few observations, or a degenerate "
+              "fixed-effects structure, in the rest) -- fewer than 2 points to plot.")
 
     months, cumulative_alpha = _cumulative_alpha_series(portfolio_returns, factors)
     if months:
@@ -454,6 +466,22 @@ def main() -> None:
     # only place in scope.
     t7 = tables.t7_robustness(robustness_table.sort("check"))
 
+    # Section 8: the full 18-variant (3 horizons x 3 methods x 2 samples)
+    # grid, each cell a Model 2 fit for beta_sale, feeding the
+    # Benjamini-Hochberg correction. Written to its own CSV (not one of
+    # T1-T8 -- outputs/__init__.py: "Nothing beyond this pre-specified list
+    # goes in the paper") purely so the 18 individual p-values behind the
+    # single reported threshold are independently auditable, matching this
+    # script's other verification CSVs (nan_audit.csv etc.).
+    bh_grid = multiple_comparisons.run_eighteen_variant_grid(unscreened_with_car, screened_with_car, size_proxies, terms)
+    bh_grid.sort(["horizon", "method", "sample"]).write_csv(storage.paths().outputs / "bh_correction_grid.csv")
+    bh_p_values = bh_grid.filter(pl.col("p_value").is_not_null())["p_value"].to_list()
+    if len(bh_p_values) < bh_grid.height:
+        print(f"  BH grid: {len(bh_p_values)}/{bh_grid.height} of the 18 pre-specified variants produced "
+              "a usable p-value; the rest are reported as None rows in bh_correction_grid.csv (too few "
+              "observations, or a degenerate fixed-effects structure, for that specific horizon/method/sample cell).")
+    bh_threshold = multiple_comparisons.bh_corrected_threshold(bh_p_values) if bh_p_values else None
+
     # nan_audit walks sample_with_car.columns in order, so it needs no sort. The
     # other two both start from a polars unique()/group_by(), whose output order
     # is not pinned -- same reproducibility issue as T7 above, and it only shows
@@ -478,23 +506,23 @@ def main() -> None:
         storage.paths().outputs / "hand_check_worksheet.csv"
     )
 
-    figure_paths = _write_figures(result, screened, prices, factors, portfolio_returns)
+    figure_paths = _write_figures(
+        result, screened, screened_with_car, prices, factors, portfolio_returns, size_proxies, terms
+    )
 
-    # bh_threshold=None, bh_computed=False: the Benjamini-Hochberg correction
-    # across Section 8's 18 pre-specified variants (3 horizons x 3 adjustment
-    # methods x 2 samples) is NOT yet computed by this script -- it needs a
-    # p-value from each of 18 Model 2 runs, and no task in this build produces
-    # that grid. bh_computed=False tells build_paper_markdown to render this
-    # honestly ("not yet computed") rather than as a "no result survived
-    # correction" finding, which would be a false substantive claim about a
-    # test this pipeline has never run (whole-branch review finding -- the
-    # old unconditional wording rendered exactly that false claim into the
-    # generated paper.md). Compute the grid before publishing.
+    # bh_computed=True: the Section 8 18-variant grid above was genuinely
+    # fit, so bh_threshold=None here (when it happens) means "computed, and
+    # nothing survived correction" -- a real finding -- not "never
+    # computed", which is bh_computed=False's meaning (see
+    # build_paper_markdown's own docstring). Prior to this, this script
+    # always passed bh_threshold=None with bh_computed=False, so no result
+    # it produced could ever be certified as "supportive" under Section 12's
+    # own rule ("only if it survives Benjamini-Hochberg correction").
     md = paper.build_paper_markdown(
         {"T1": t1, "T2": t2, "T3": t3, "T4": t4, "T5": t5, "T6": t6, "T7": t7},
         figure_paths,
-        bh_threshold=None,
-        bh_computed=False,
+        bh_threshold=bh_threshold,
+        bh_computed=True,
     )
     (storage.paths().outputs / "paper.md").write_text(md)
     print(f"Wrote outputs to {storage.paths().outputs}")

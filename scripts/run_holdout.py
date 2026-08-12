@@ -13,6 +13,7 @@ from congressional_sales import storage
 from congressional_sales.events import car
 from congressional_sales.events.attach import attach_car_bhar
 from congressional_sales.models import model2
+from congressional_sales.outputs import tables
 from congressional_sales.sample import classify
 from congressional_sales.sample.funnel import build_sample
 from congressional_sales.sample.screens import screen1_rebalancing, screen2_tax_management, screen3_liquidation
@@ -154,6 +155,37 @@ def main() -> None:
           f"{screened_all.height} screened overall) -> {frame.height} estimated")
     print("HOLDOUT RESULT (Section 9 item 10 -- run once, report as-is):")
     print(holdout_result)
+
+    # T8 (Section 10) -- this is this script's whole reason for writing to
+    # `outputs/` at all: printing holdout_result to stdout, as the earlier
+    # version of this script did exclusively, gives Section 9 item 10 no
+    # durable record if that terminal output isn't captured by hand. Written
+    # as its own file rather than folded into run_full_pipeline.py's
+    # paper.md, since this script runs later, once, against a warehouse
+    # state paper.md was already generated from -- rewriting paper.md here
+    # would require re-deriving T1-T7 this script never computes.
+    storage.paths().ensure()
+    t8 = tables.t8_holdout(holdout_result)
+    t8.write_csv(storage.paths().outputs / "t8_holdout.csv")
+    print(f"Wrote T8 (holdout results) to {storage.paths().outputs / 't8_holdout.csv'}")
+
+    # Append T8 to paper.md if run_full_pipeline.py has already produced one
+    # in this same outputs/ directory -- Section 10's output list treats T8
+    # as part of one paper, and appending it here (rather than requiring a
+    # second manual step) is the only way this script can satisfy that
+    # without re-deriving T1-T7. This script is documented to run once, last
+    # (module docstring); re-running it against the same paper.md would
+    # append a second "## Table T8" section rather than replace the first,
+    # which is a re-run problem this project's own protocol already forbids
+    # ("do not re-run after seeing its result"), not a new failure mode this
+    # append needs to guard against.
+    paper_path = storage.paths().outputs / "paper.md"
+    if paper_path.exists():
+        with paper_path.open("a") as f:
+            f.write("\n## Table T8\n\n")
+            f.write(t8.to_pandas().to_markdown(index=False))
+            f.write("\n")
+        print(f"Appended Table T8 to {paper_path}")
 
 
 if __name__ == "__main__":

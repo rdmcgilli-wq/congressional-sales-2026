@@ -84,3 +84,38 @@ def test_t5_model2_combines_full_and_screened():
     row = t5.filter(pl.col("param") == "sale")
     assert row["beta_full"][0] == 0.01
     assert row["beta_screened"][0] == -0.02
+
+
+def test_t8_holdout_has_one_row_per_param_with_beta_and_se():
+    holdout_result = {
+        "params": {"sale": -0.015, "opportunistic": 0.004},
+        "se": {"sale": 0.006, "opportunistic": 0.003},
+        "n_obs": 214,
+        "n_absorbed_member": 42,
+        "n_absorbed_year": 2,
+        "n_absorbed_industry": 8,
+    }
+    t8 = tables.t8_holdout(holdout_result)
+    assert t8.height == 2
+    sale_row = t8.filter(pl.col("param") == "sale")
+    assert sale_row["beta"][0] == pytest.approx(-0.015)
+    assert sale_row["se"][0] == pytest.approx(0.006)
+    assert sale_row["n_obs"][0] == 214
+    assert sale_row["n_absorbed_member"][0] == 42
+
+
+def test_t8_holdout_handles_a_param_with_no_matching_se():
+    # run_model2's params/se dicts are built independently (one per fitted
+    # coefficient), so a param present in one but missing from the other is
+    # not something this table should crash on -- se should come through as
+    # null rather than raising a KeyError.
+    holdout_result = {
+        "params": {"sale": -0.015},
+        "se": {},
+        "n_obs": 10,
+        "n_absorbed_member": 5,
+        "n_absorbed_year": 1,
+        "n_absorbed_industry": 1,
+    }
+    t8 = tables.t8_holdout(holdout_result)
+    assert t8["se"][0] is None

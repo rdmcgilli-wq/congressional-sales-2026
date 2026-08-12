@@ -40,9 +40,12 @@ LIMITATIONS = """## Limitations
 - **BHAR is computed for every CAR variant but not separately reported.**
   All 18 `bhar_*` columns are attached to the sample alongside their CAR
   counterparts; no table or figure currently presents them.
-- **T8 (18-month holdout results) is not included in this document.**
-  `scripts/run_holdout.py` is a separate, run-once, run-last script (Section
-  9 item 10) that prints its result rather than writing it to `outputs/`.
+- **T8 (18-month holdout results) is written separately, after this
+  document already exists.** `scripts/run_holdout.py` is a run-once,
+  run-last script (Section 9 item 10); it writes `outputs/t8_holdout.csv`
+  and appends a "## Table T8" section to this file if it finds one already
+  on disk. If you're reading this and don't see a Table T8 section below,
+  the holdout script hasn't been run yet.
 - **All trade-level data is sourced from Quiver Quantitative**, a
   third-party aggregator of House/Senate financial disclosures, not pulled
   directly from the House Clerk or Senate eFD systems (Global Constraints:

@@ -178,7 +178,7 @@ def build_model2_frame(
     return pl.DataFrame(rows).drop_nulls(["car", "log_size", "prior_12mo_return"])
 
 
-def run_model2(df: pl.DataFrame) -> dict:
+def run_model2(df: pl.DataFrame, absorb_year: bool = True) -> dict:
     """Fit Model 2: pooled OLS with member/year/industry FE absorbed via
     AbsorbingLS, standard errors clustered at the member level.
 
@@ -202,6 +202,18 @@ def run_model2(df: pl.DataFrame) -> dict:
 
     `size_band` dummies ARE included -- transaction size varies within a
     member over time, so size_band is not collinear with MemberFE.
+
+    `absorb_year=False` drops YearFE from the absorbed set, for exactly one
+    caller: `robustness.year_by_year_effects` (Section 9 item 2 / F7), which
+    fits this same specification separately within each single calendar
+    year. `year` is constant within a single-year subset, so YearFE there
+    has exactly one level -- degenerate ("All fixed effects after the first
+    one should have more than one level", confirmed empirically against the
+    installed linearmodels version before this parameter was added) and
+    controls for nothing anyway, since there is no cross-year variation left
+    within the subset to explain. MemberFE and IndustryFE are unaffected and
+    still absorbed either way; this is the pre-registered specification with
+    exactly one already-inert term removed, not a different model.
     """
     from linearmodels.iv.absorbing import AbsorbingLS
 
@@ -220,7 +232,8 @@ def run_model2(df: pl.DataFrame) -> dict:
     exog = pd.concat([pdf[numeric_regressors], categorical_regressors], axis=1).astype(float)
     exog = pd.concat([pd.Series(1.0, index=exog.index, name="const"), exog], axis=1)
 
-    absorb = pdf[["bioguide_id", "year", "industry"]].astype("category")
+    absorb_cols = ["bioguide_id", "year", "industry"] if absorb_year else ["bioguide_id", "industry"]
+    absorb = pdf[absorb_cols].astype("category")
 
     model = AbsorbingLS(pdf["car"].astype(float), exog, absorb=absorb)
     # debiased=True applies the finite-sample cluster correction (a G/(G-1)-
@@ -234,6 +247,12 @@ def run_model2(df: pl.DataFrame) -> dict:
     return {
         "params": {k: float(v) for k, v in fit.params.items() if k != "const"},
         "se": {k: float(v) for k, v in fit.std_errors.items() if k != "const"},
+        # p-values for the same cluster-robust t-stats the params/se above
+        # come from -- confirmed present on the installed linearmodels
+        # version's AbsorbingLSResults (`'pvalues' in dir(...)`) before this
+        # was added. Feeds Section 8's Benjamini-Hochberg correction, which
+        # needs a p-value per one of the 18 pre-specified test variants.
+        "pvalues": {k: float(v) for k, v in fit.pvalues.items() if k != "const"},
         "n_obs": int(fit.nobs),
         "n_absorbed_member": pdf["bioguide_id"].nunique(),
         "n_absorbed_year": pdf["year"].nunique(),

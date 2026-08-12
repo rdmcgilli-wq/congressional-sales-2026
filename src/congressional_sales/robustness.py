@@ -100,3 +100,51 @@ def run_robustness_suite(
         checks.append(_run_primary("filing_date_entry", filing_date_variant, size_proxies, terms, car_col))
 
     return pl.DataFrame(checks)
+
+
+def year_by_year_effects(
+    sample_with_car: pl.DataFrame, size_proxies: dict, terms: pl.DataFrame, car_col: str, ci_z: float = 1.96,
+) -> pl.DataFrame:
+    """Section 9 item 2 ("does the effect exist outside 2020-2021?") and F7:
+    beta_sale re-estimated separately within each calendar year present in
+    `sample_with_car` (grouped on `report_date`, matching this module's
+    other checks -- e.g. excl_2020_2021 above -- which also group on
+    report_date rather than transaction_date).
+
+    Uses model2.run_model2(..., absorb_year=False): a single-year subset
+    makes `year` constant, which the pre-registered specification's YearFE
+    would find degenerate (see that parameter's docstring). MemberFE and
+    IndustryFE remain absorbed exactly as in the primary specification --
+    this is not a different model, just the one already-inert term removed.
+
+    Returns one row per year: beta_sale, se_sale, a ci_z-sigma normal-
+    approximation confidence interval (ci_z=1.96 -> ~95%, matching what F7
+    plots), and n. A year too thin to fit (fewer than 10 rows, fewer than
+    10 complete-case regression rows, or a degenerate FE structure even
+    without YearFE) reports a None row rather than raising -- the same
+    "insufficient variation is not a different failure category" contract
+    _run_primary above already uses.
+    """
+    rows = []
+    for year in sorted(sample_with_car["report_date"].dt.year().unique().to_list()):
+        year_df = sample_with_car.filter(pl.col("report_date").dt.year() == year)
+        row = {"year": year, "beta_sale": None, "se_sale": None, "ci_lower": None, "ci_upper": None, "n": year_df.height}
+        if year_df.height >= 10:
+            frame = model2.build_model2_frame(year_df, size_proxies, terms, car_col)
+            if frame.height >= 10 and frame["bioguide_id"].n_unique() >= 2:
+                try:
+                    result = model2.run_model2(frame, absorb_year=False)
+                except (ValueError, AbsorbingEffectError):
+                    result = None
+                if result is not None:
+                    beta, se = result["params"].get("sale"), result["se"].get("sale")
+                    if beta is not None and se is not None:
+                        row.update(
+                            {
+                                "beta_sale": beta, "se_sale": se,
+                                "ci_lower": beta - ci_z * se, "ci_upper": beta + ci_z * se,
+                                "n": result["n_obs"],
+                            }
+                        )
+        rows.append(row)
+    return pl.DataFrame(rows)

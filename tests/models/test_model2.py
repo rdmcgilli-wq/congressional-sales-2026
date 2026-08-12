@@ -125,6 +125,7 @@ def test_run_model2_returns_all_expected_coefficient_keys():
     }
     assert expected.issubset(result["params"].keys())
     assert expected.issubset(result["se"].keys())
+    assert expected.issubset(result["pvalues"].keys())
     assert result["n_obs"] == df.height
 
 
@@ -132,6 +133,30 @@ def test_run_model2_sale_coefficient_is_positive_on_constructed_data():
     df = _regression_frame()
     result = model2.run_model2(df)
     assert result["params"]["sale"] > 0
+
+
+def test_run_model2_pvalues_are_valid_probabilities():
+    # Section 8's Benjamini-Hochberg correction consumes these directly, so
+    # they must be genuine p-values, not raw t-stats or something malformed.
+    df = _regression_frame()
+    result = model2.run_model2(df)
+    for p in result["pvalues"].values():
+        assert 0.0 <= p <= 1.0
+
+
+def test_run_model2_absorb_year_false_fits_on_a_single_year_subset():
+    # Section 9 item 2 / F7's whole reason for existing: a single-year
+    # subset makes `year` constant, which the default absorb_year=True
+    # raises on (YearFE has exactly one level). absorb_year=False drops
+    # YearFE and must fit cleanly on exactly that subset.
+    df = _panel_with_chamber_and_party_variation().filter(pl.col("year") == 2019)
+    assert df["year"].n_unique() == 1
+    with pytest.raises(ValueError):
+        model2.run_model2(df)  # confirms the subset really is degenerate under the default
+    result = model2.run_model2(df, absorb_year=False)
+    assert result["n_obs"] == df.height
+    assert "sale" in result["params"]
+    assert all(se > 0 for se in result["se"].values())
 
 
 def test_run_model2_fits_when_chamber_and_party_vary_across_members():

@@ -89,4 +89,26 @@ def t7_robustness(robustness_table: pl.DataFrame) -> pl.DataFrame:
 
 
 def t8_holdout(holdout_result: dict) -> pl.DataFrame:
-    return pl.DataFrame([holdout_result])
+    """Section 9 item 10: the primary specification re-estimated once on the
+    18-month holdout window. `holdout_result` is models.model2.run_model2's
+    raw return (params/se as nested dicts plus n_obs/n_absorbed_*) -- flatten
+    it into one row per regression parameter, same shape convention as
+    t5_model2, rather than the original `pl.DataFrame([holdout_result])`,
+    which handed polars a dict-of-dicts for the "params"/"se" keys with no
+    defined column shape. `n_obs` and the three `n_absorbed_*` fixed-effect
+    counts are repeated on every row (constants for a single regression) so
+    every fact about this one holdout run lives in a single flat table."""
+    return pl.DataFrame(
+        [
+            {
+                "param": p,
+                "beta": holdout_result["params"][p],
+                "se": holdout_result["se"].get(p),
+                "n_obs": holdout_result["n_obs"],
+                "n_absorbed_member": holdout_result["n_absorbed_member"],
+                "n_absorbed_year": holdout_result["n_absorbed_year"],
+                "n_absorbed_industry": holdout_result["n_absorbed_industry"],
+            }
+            for p in sorted(holdout_result["params"])
+        ]
+    )
