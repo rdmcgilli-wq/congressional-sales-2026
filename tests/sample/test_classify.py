@@ -125,3 +125,85 @@ def test_committee_match_adds_only_the_flag_column():
     )
     out = classify.committee_match(rows, assignments, sic)
     assert set(out.columns) - set(rows.columns) == {"committee_match"}
+
+
+def _xom_sic():
+    return pl.DataFrame(
+        {"ticker": ["XOM"], "cik": [34088], "sic_code": ["2911"], "sic_description": ["Petroleum Refining"]},
+        schema={"ticker": pl.Utf8, "cik": pl.Int64, "sic_code": pl.Utf8, "sic_description": pl.Utf8},
+    )
+
+
+def _historical(bioguide, committee_name, start, end=None, chamber="senate"):
+    return pl.DataFrame(
+        {
+            "bioguide_id": [bioguide], "committee_name": [committee_name], "chamber": [chamber],
+            "assignment_start": [start], "assignment_end": [end],
+        },
+        schema={
+            "bioguide_id": pl.Utf8, "committee_name": pl.Utf8, "chamber": pl.Utf8,
+            "assignment_start": pl.Date, "assignment_end": pl.Date,
+        },
+    )
+
+
+def test_committee_match_uses_historical_assignment_as_of_transaction_date():
+    # Member's CURRENT committee (Banking -> Money) does NOT match XOM's
+    # Energy sector, but their HISTORICAL committee, in force on the
+    # transaction's own date, does -- confirms the historical lookup is
+    # actually consulted, not silently bypassed in favor of current.
+    rows = pl.DataFrame([_row("XOM", "A1", date(2016, 3, 10))], schema=SAMPLE_SCHEMA)
+    current_assignments = pl.DataFrame(
+        {
+            "bioguide_id": ["A1"], "committee_code": ["SSBK"], "chamber": ["senate"],
+            "committee_name": ["Senate Committee on Banking, Housing, and Urban Affairs"],
+        }
+    )
+    historical = _historical("A1", "Senate Committee on Energy and Natural Resources", date(2015, 1, 6), date(2017, 1, 3))
+    out = classify.committee_match(rows, current_assignments, _xom_sic(), historical_assignments=historical)
+    assert out["committee_match"][0] is True
+
+
+def test_committee_match_falls_back_to_current_snapshot_after_coverage_end():
+    # Same historical row as above, but the transaction postdates the
+    # historical source's own documented coverage boundary -- must fall
+    # back to the current (non-matching) snapshot rather than using a
+    # historical row the source can't actually vouch for at that date.
+    rows = pl.DataFrame([_row("XOM", "A1", date(2022, 3, 10))], schema=SAMPLE_SCHEMA)
+    current_assignments = pl.DataFrame(
+        {
+            "bioguide_id": ["A1"], "committee_code": ["SSBK"], "chamber": ["senate"],
+            "committee_name": ["Senate Committee on Banking, Housing, and Urban Affairs"],
+        }
+    )
+    historical = _historical("A1", "Senate Committee on Energy and Natural Resources", date(2015, 1, 6), None)
+    out = classify.committee_match(rows, current_assignments, _xom_sic(), historical_assignments=historical)
+    assert out["committee_match"][0] is False
+
+
+def test_committee_match_falls_back_to_current_snapshot_when_no_historical_row_covers_the_date():
+    # transaction_date predates this member's earliest historical
+    # assignment entirely -- no historical row covers it, so this must
+    # fall back to the (matching) current snapshot rather than reporting
+    # no match at all.
+    rows = pl.DataFrame([_row("XOM", "A1", date(2013, 3, 10))], schema=SAMPLE_SCHEMA)
+    current_assignments = pl.DataFrame(
+        {
+            "bioguide_id": ["A1"], "committee_code": ["SSEG"], "chamber": ["senate"],
+            "committee_name": ["Senate Committee on Energy and Natural Resources"],
+        }
+    )
+    historical = _historical("A1", "Senate Committee on Banking, Housing, and Urban Affairs", date(2015, 1, 6), date(2017, 1, 3))
+    out = classify.committee_match(rows, current_assignments, _xom_sic(), historical_assignments=historical)
+    assert out["committee_match"][0] is True
+
+
+def test_committee_match_treats_null_assignment_end_as_an_open_still_active_assignment():
+    rows = pl.DataFrame([_row("XOM", "A1", date(2016, 6, 1))], schema=SAMPLE_SCHEMA)
+    current_assignments = pl.DataFrame(
+        {"bioguide_id": [], "committee_code": [], "chamber": [], "committee_name": []},
+        schema={"bioguide_id": pl.Utf8, "committee_code": pl.Utf8, "chamber": pl.Utf8, "committee_name": pl.Utf8},
+    )
+    historical = _historical("A1", "Senate Committee on Energy and Natural Resources", date(2015, 1, 6), None)
+    out = classify.committee_match(rows, current_assignments, _xom_sic(), historical_assignments=historical)
+    assert out["committee_match"][0] is True

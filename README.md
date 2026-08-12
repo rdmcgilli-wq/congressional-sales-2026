@@ -81,7 +81,16 @@ tickers within the sample period).
 
 ```bash
 uv run python -c "from congressional_sales.sources.french import ingest_factors; ingest_factors()"
-uv run python -c "from congressional_sales.sources.legislators import ingest_legislator_terms, ingest_committee_assignments; ingest_legislator_terms(); ingest_committee_assignments()"
+uv run python -c "
+from congressional_sales.sources.legislators import (
+    ingest_legislator_terms, ingest_committee_assignments,
+    ingest_icpsr_crosswalk, ingest_historical_committee_assignments,
+)
+ingest_legislator_terms()
+ingest_committee_assignments()
+ingest_icpsr_crosswalk()  # must run before the next line -- it's the join key
+ingest_historical_committee_assignments()
+"
 
 # Per ticker, for every ticker in the universe chosen in step 3.
 # SPY is REQUIRED -- it is the market benchmark and defines the trading
@@ -102,6 +111,19 @@ Ingestion is idempotent — every table upserts on its natural key, so a
 re-run over an overlapping window is always safe and never duplicates rows.
 Rate limits are enforced per host in `config.py`; a full universe pull takes
 hours, and that is deliberate.
+
+`ingest_historical_committee_assignments` pulls Charles Stewart III and
+Jonathan Woon's session-level committee-assignment data (MIT, no auth) and
+resolves it to `bioguide_id` via the ICPSR crosswalk the line above it
+builds. This is real, per-member, per-Congress committee history — not the
+current-only snapshot `ingest_committee_assignments` gives you — but its
+free coverage stops at the 103rd–115th Congress
+(`sources.legislators.HISTORICAL_COMMITTEE_ASSIGNMENTS_COVERAGE_END`,
+2019-01-03). `sample.classify.committee_match` uses it for any transaction
+before that date and falls back to the current-only snapshot after it; no
+free source for 2019 onward was found. Skip this step entirely and H4's
+`committee_match` still works exactly as it always has, current-snapshot
+only, for the whole sample period.
 
 Price history must extend far enough back: a transaction needs ~250
 trading sessions *before* it (the four-factor estimation window) and 180

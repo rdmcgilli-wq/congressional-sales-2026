@@ -381,6 +381,12 @@ def main() -> None:
     prices, factors = storage.read("equity_eod"), storage.read("ff_factors")
     terms, assignments = storage.read("legislator_terms"), storage.read("committee_assignments")
     sic = storage.read("sic_codes")
+    # Empty (not None) if ingest_historical_committee_assignments() was
+    # never run -- classify.committee_match treats that identically to
+    # historical_assignments=None (falls back to the current-only
+    # snapshot for every row), so this script works unchanged whether or
+    # not the historical source has been ingested.
+    historical_assignments = storage.read("committee_assignments_historical")
 
     # is_routine (H3) and committee_match (H4) are classified ONCE, on the
     # unscreened sample, before splitting into unscreened/screened -- not
@@ -406,7 +412,8 @@ def main() -> None:
     # of intercept-collinearity bug already found in Task 19
     # (chamber/party) and Task 23's robustness fixture design.
     unscreened = classify.committee_match(
-        classify.is_routine_trader(result.sample.sort(CANONICAL_ORDER)), assignments, sic
+        classify.is_routine_trader(result.sample.sort(CANONICAL_ORDER)), assignments, sic,
+        historical_assignments=historical_assignments,
     )
     # Re-sorted after the screens too: screen3_liquidation sorts by
     # (bioguide_id, transaction_date), which is not a total order here, and

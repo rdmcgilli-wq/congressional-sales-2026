@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from datetime import date
 
+import pandas as pd
+import polars as pl
+import pytest
 import yaml
 
 from congressional_sales.sources import legislators
@@ -119,3 +122,146 @@ def test_ingest_committee_assignments_writes_table(monkeypatch):
     from congressional_sales import storage
     got = storage.read("committee_assignments")
     assert got.height == 2
+
+
+LEGISLATOR_WITH_ICPSR_YAML = """
+- id:
+    bioguide: B001236
+    icpsr: 29701
+  name:
+    official_full: John Boozman
+- id:
+    bioguide: K000367
+    icpsr: 40305
+  name:
+    official_full: Amy Klobuchar
+- id:
+    bioguide: Z999999
+  name:
+    official_full: No ICPSR On File
+"""
+
+
+def test_parse_icpsr_crosswalk_extracts_bioguide_and_icpsr_pairs():
+    docs = yaml.safe_load(LEGISLATOR_WITH_ICPSR_YAML)
+    df = legislators.parse_icpsr_crosswalk(docs)
+    assert df.height == 2  # the third person, with no icpsr id, is dropped
+    row = df.filter(pl.col("bioguide_id") == "B001236")
+    assert row["icpsr_id"][0] == 29701
+
+
+def test_parse_icpsr_crosswalk_on_empty_docs_returns_typed_empty_frame():
+    df = legislators.parse_icpsr_crosswalk([])
+    assert df.is_empty()
+    assert df.schema["icpsr_id"] == pl.Int64
+
+
+def test_ingest_icpsr_crosswalk_writes_table(monkeypatch):
+    monkeypatch.setattr(legislators, "get_text", lambda url, *a, **k: LEGISLATOR_WITH_ICPSR_YAML)
+    n = legislators.ingest_icpsr_crosswalk()
+    assert n == 2
+    from congressional_sales import storage
+    got = storage.read("icpsr_crosswalk")
+    assert got.height == 2
+
+
+def _stewart_woon_fixture(rows: list[dict]) -> pd.DataFrame:
+    """A pandas DataFrame shaped like Stewart & Woon's real file, already
+    past the header=1 read (see parse_historical_committee_assignments's
+    docstring) -- confirmed live against the real
+    house_assignments_103-115-1.xls column names before this was written."""
+    base = {
+        "Congress": 115, "Committee code": 102, "ID #": 20531, "Name": "Test Member",
+        "Maj/Min": 1, "Rank Within Party Status": 1, "Party": 200,
+        "Date of Assignment": pd.Timestamp("2017-01-03"), "Date of Termination": pd.NaT,
+        "Senior Party Member": 0, "Committee Seniority": 1, "Committee Period of Service": 1,
+        "Committee status at end of this Congress": None, "Committee continuity of assignment in next Congress": None,
+        "Appointment Citation": None, "Committee Name": "Agriculture",
+        "State": 49.0, "CD": 11.0, "State Name": "TX", "Notes": None,
+    }
+    full_rows = []
+    for overrides in rows:
+        row = dict(base)
+        row.update(overrides)
+        full_rows.append(row)
+    return pd.DataFrame(full_rows)
+
+
+def _crosswalk(pairs: dict) -> pl.DataFrame:
+    return pl.DataFrame(
+        {"bioguide_id": list(pairs.keys()), "icpsr_id": list(pairs.values())},
+        schema={"bioguide_id": pl.Utf8, "icpsr_id": pl.Int64},
+    )
+
+
+def test_parse_historical_committee_assignments_resolves_via_crosswalk():
+    raw = _stewart_woon_fixture([{"ID #": 20531, "Committee Name": "Agriculture"}])
+    crosswalk = _crosswalk({"C000001": 20531})
+    df = legislators.parse_historical_committee_assignments(raw, "house", crosswalk)
+    assert df.height == 1
+    assert df["bioguide_id"][0] == "C000001"
+    assert df["committee_name"][0] == "Agriculture"
+    assert df["chamber"][0] == "house"
+    assert df["assignment_start"][0] == date(2017, 1, 3)
+
+
+def test_parse_historical_committee_assignments_keeps_open_assignment_as_null_end():
+    # Date of Termination is NaT in the base fixture -- a still-open
+    # assignment as of the dataset's own last update, a real value to carry
+    # through, not a parsing failure.
+    raw = _stewart_woon_fixture([{"ID #": 20531}])
+    crosswalk = _crosswalk({"C000001": 20531})
+    df = legislators.parse_historical_committee_assignments(raw, "house", crosswalk)
+    assert df["assignment_end"][0] is None
+
+
+def test_parse_historical_committee_assignments_drops_unresolvable_icpsr():
+    raw = _stewart_woon_fixture([{"ID #": 99999}])  # not in the crosswalk
+    crosswalk = _crosswalk({"C000001": 20531})
+    df = legislators.parse_historical_committee_assignments(raw, "house", crosswalk)
+    assert df.is_empty()
+
+
+def test_parse_historical_committee_assignments_on_empty_input_returns_typed_empty_frame():
+    df = legislators.parse_historical_committee_assignments(pd.DataFrame(), "house", _crosswalk({}))
+    assert df.is_empty()
+    assert df.schema["assignment_start"] == pl.Date
+
+
+def test_ingest_historical_committee_assignments_raises_without_a_crosswalk():
+    # icpsr_crosswalk must be ingested first -- there is no other way to
+    # resolve Stewart & Woon's ICPSR-keyed rows to a bioguide_id.
+    with pytest.raises(RuntimeError, match="icpsr_crosswalk"):
+        legislators.ingest_historical_committee_assignments()
+
+
+def test_ingest_historical_committee_assignments_writes_table(monkeypatch):
+    from congressional_sales import storage
+
+    crosswalk = _crosswalk({"C000001": 20531})
+    storage.write("icpsr_crosswalk", crosswalk, key_cols=["bioguide_id"])
+
+    house_raw = _stewart_woon_fixture([{"ID #": 20531, "Committee Name": "Agriculture"}])
+    empty_raw = pd.DataFrame(columns=house_raw.columns)
+
+    # The real xlrd/.xls round trip against MIT's actual files was verified
+    # live during research, not re-tested here -- this test isolates the
+    # ORCHESTRATION (both URLs fetched, both parsed, results combined and
+    # written), which parse_historical_committee_assignments' own tests
+    # above don't exercise. get_bytes is monkeypatched to a URL-tagged
+    # marker; pandas.read_excel is monkeypatched to resolve that marker
+    # back to a house or an empty (senate) fixture frame.
+    def fake_get_bytes(url, *a, **k):
+        return b"house" if "house" in url else b"senate"
+
+    def fake_read_excel(buf, engine=None, header=None):
+        return house_raw if buf.getvalue() == b"house" else empty_raw
+
+    monkeypatch.setattr(legislators, "get_bytes", fake_get_bytes)
+    monkeypatch.setattr("pandas.read_excel", fake_read_excel)
+
+    n = legislators.ingest_historical_committee_assignments()
+    assert n == 1
+    got = storage.read("committee_assignments_historical")
+    assert got.height == 1
+    assert got["bioguide_id"][0] == "C000001"

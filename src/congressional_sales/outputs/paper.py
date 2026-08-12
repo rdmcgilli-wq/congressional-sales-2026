@@ -19,9 +19,14 @@ LIMITATIONS = """## Limitations
   assignment term-end dates) are implemented. Blind trust establishment
   and confirmation to an executive-branch position have no available
   structured data source and are not detected.
-- **Committee-assignment data is a current-only snapshot**, not a true
-  historical per-congress record; H4's committee-match variable uses each
-  member's most recently known committee assignment.
+- **Committee-assignment data is historical only through 2019-01-03**
+  (Stewart & Woon, 103rd-115th Congresses, MIT). H4's committee-match
+  variable uses each member's true committee assignment as of the
+  transaction date for transactions before that boundary; for transactions
+  on or after it, no free historical source was found, and it falls back
+  to each member's most recently known (current-snapshot) committee
+  assignment instead -- true for roughly the second half of this study's
+  sample period, not the whole thing.
 - **Size and industry matching** use trailing dollar volume as a proxy for
   market capitalization (no shares-outstanding source), matched only
   within this study's own sample universe rather than the broader market.

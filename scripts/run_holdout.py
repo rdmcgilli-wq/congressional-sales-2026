@@ -109,6 +109,10 @@ def main() -> None:
     prices, factors = storage.read("equity_eod"), storage.read("ff_factors")
     sic = storage.read("sic_codes")
     terms, assignments = storage.read("legislator_terms"), storage.read("committee_assignments")
+    # Empty (not None) if never ingested -- see the matching comment in
+    # run_full_pipeline.py; classify.committee_match treats that exactly
+    # like historical_assignments=None.
+    historical_assignments = storage.read("committee_assignments_historical")
 
     # Section 9 item 10 is the last of "10 checks, primary specification
     # only" (Section 9's own header) -- it re-runs the SCREENED-sample
@@ -131,7 +135,8 @@ def main() -> None:
     # Classification runs BEFORE the screens and on the unscreened frame, for
     # the same reason run_full_pipeline.py does it in that order.
     classified = classify.committee_match(
-        classify.is_routine_trader(result.sample.sort(CANONICAL_ORDER)), assignments, sic
+        classify.is_routine_trader(result.sample.sort(CANONICAL_ORDER)), assignments, sic,
+        historical_assignments=historical_assignments,
     )
     screened_all = screen3_liquidation(
         screen2_tax_management(screen1_rebalancing(classified), prices), terms
