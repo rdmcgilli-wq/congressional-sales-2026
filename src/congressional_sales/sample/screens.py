@@ -99,7 +99,20 @@ def screen3_liquidation(
     terms: pl.DataFrame,
     portfolio_liquidation_pct: float = 0.60,
     retirement_window_days: int = 90,
+    apply_3a: bool = True,
 ) -> pl.DataFrame:
+    """`apply_3a=False` (PRE_ANALYSIS_PLAN.md Addendum B) drops
+    sub-condition 1 (the >60%-of-cumulative-disclosed-exposure proxy)
+    entirely, keeping sub-condition 2 (the retirement window) exactly as
+    specified. This exists to report the screened sample BOTH with and
+    without sub-condition 1 applied, not to replace it: that sub-condition
+    is built purely from disclosed transaction amounts WITHIN the sample
+    period and has no visibility into a member's true pre-existing
+    holdings, so it can structurally never fire for a sale where
+    cumulative prior DISCLOSED exposure isn't positive -- a real,
+    documented limitation, not a bug. See Addendum B for the full
+    reasoning; this parameter is the mechanism, not the decision.
+    """
     # Sorted on the full canonical key, not just ["bioguide_id",
     # "transaction_date"]: cum_sum().over("bioguide_id") below needs a
     # deterministic order WITHIN each member, and polars does not
@@ -124,9 +137,12 @@ def screen3_liquidation(
         pl.col("_signed").cum_sum().over("bioguide_id").alias("_cum_exposure")
     )
     prior_exposure = with_cum["_cum_exposure"] - with_cum["_signed"]
-    is_big_sale = (with_cum["transaction"] == "Sale") & (prior_exposure > 0) & (
-        with_cum["amount_low"] > portfolio_liquidation_pct * prior_exposure
-    )
+    if apply_3a:
+        is_big_sale = (with_cum["transaction"] == "Sale") & (prior_exposure > 0) & (
+            with_cum["amount_low"] > portfolio_liquidation_pct * prior_exposure
+        )
+    else:
+        is_big_sale = pl.Series([False] * with_cum.height)
 
     # Sub-condition 2: retirement window.
     last_terms = (

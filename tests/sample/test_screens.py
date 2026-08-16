@@ -154,6 +154,32 @@ def test_screen3_flags_sale_exceeding_60pct_of_cumulative_net_exposure():
     assert sale["excluded_liquidation"][0] is True
 
 
+def test_screen3_apply_3a_false_never_flags_the_cumulative_exposure_subcondition():
+    # PRE_ANALYSIS_PLAN.md Addendum B: apply_3a=False must skip
+    # sub-condition 1 entirely -- the exact same sale that
+    # test_screen3_flags_sale_exceeding_60pct_of_cumulative_net_exposure
+    # confirms DOES get flagged with the default apply_3a=True.
+    rows = _df(
+        [
+            _row("AAPL", "A1", "Purchase", date(2020, 1, 1), amount=10000.0),
+            _row("AAPL", "A1", "Sale", date(2020, 2, 1), amount=8000.0),
+        ]
+    )
+    terms = _terms("A1", "rep", date(2015, 1, 1), date(2025, 1, 1))
+    out = screens.screen3_liquidation(rows, terms, apply_3a=False)
+    sale = out.filter(pl.col("transaction") == "Sale")
+    assert sale["excluded_liquidation"][0] is False
+
+
+def test_screen3_apply_3a_false_still_flags_the_retirement_subcondition():
+    # Sub-condition 2 (retirement window) must be UNCHANGED by apply_3a --
+    # only sub-condition 1 is toggled.
+    rows = _df([_row("AAPL", "A1", "Sale", date(2020, 12, 20), amount=100.0)])
+    terms = _terms("A1", "rep", date(2015, 1, 1), date(2021, 1, 3))
+    out = screens.screen3_liquidation(rows, terms, apply_3a=False)
+    assert out["excluded_liquidation"][0] is True
+
+
 def test_screen3_does_not_flag_a_small_partial_sale():
     rows = _df(
         [
