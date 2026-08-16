@@ -352,3 +352,67 @@ funnel, the screens, the outcome variables, the models, and the output
 list are now all fixed before any universe-wide analysis has been run.
 Any further change is post-hoc by construction and must be reported as
 such.
+
+---
+
+## Addendum B (2026-08-12): Screen 3(a) reported with and without
+
+**Committed:** 2026-08-12 (pre-analysis — see status note below)
+**Author:** Ryan McGillicuddy
+**Status:** Committed before any universe-wide or real-data analysis. The
+only ingestion performed as of this addendum remains the four-ticker
+mechanical pipeline check (AAPL, MSFT, NVDA, SPY) noted in Addendum A, plus
+a fully synthetic-warehouse end-to-end test added to this repository's own
+test suite — no real transaction, and no result under either specification
+below, has informed this rule. This addendum does not edit Section 5
+above, which remains as committed in v1.0.
+
+**Rule.** Screen 3's sub-condition (a) — excluding a sale that exceeds 60%
+of the member's cumulative net disclosed exposure — is applied two ways,
+both reported, neither treated as the sole specification: once exactly as
+Section 5 originally specifies (the default), and once with sub-condition
+(a) omitted entirely, leaving only sub-condition (b) (the retirement
+window) active. `sample.sample.screens.screen3_liquidation` implements
+this as an `apply_3a: bool` parameter, defaulting to `True` — every
+existing caller that does not pass it gets Section 5's original behavior,
+unchanged. Every table and figure downstream of the screened sample is to
+be produced under both settings once a real run occurs, exactly as Section
+4 already requires reporting both the unscreened and screened samples
+side by side ("the gap between them is itself informative") — this
+addendum applies that same discipline one level deeper, to a single
+sub-condition of a single screen, rather than deciding the question by
+fiat before any real data has been seen.
+
+**Reasoning.** Sub-condition (a)'s cumulative-exposure figure is built
+purely from this study's own disclosed transaction amounts within the
+sample period — it has no visibility into a member's true, pre-existing
+portfolio, which existed before 2014-01-01 and is never observed. Two
+consequences follow directly, neither of which is a coding error: first,
+the sub-condition can structurally never fire for any sale where the
+member's cumulative prior *disclosed* exposure is zero or negative at that
+point, regardless of how large the sale truly is relative to their real
+(unobserved) holdings — a member who is a net seller from the very first
+disclosure in the sample can never trigger sub-condition (a), no matter
+what they sell. Second, and in the opposite direction, a member with a
+short disclosed history who makes one large early purchase and then a
+large early sale can trigger sub-condition (a) even though that sale is a
+small fraction of their true portfolio. Both failure modes point the same
+way: sub-condition (a) can be wrong in either direction, and there is no
+way to know, from the disclosure data alone, which members it is wrong
+for. Dropping it silently would change the screened sample from what v1.0
+committed to without a record of why; keeping it silently would report a
+single number as if it were not sensitive to a proxy this addendum has
+just shown is imperfect in a specific, structural way. Reporting both is
+the only option that does not quietly resolve an open measurement question
+by fiat.
+
+This is a narrower, more targeted version of the same logic Addendum A
+already applied to the ticker universe: a screening rule built from
+incomplete, disclosure-only data can bias a study in a direction that
+happens to align with — or against — the effect under test, and the
+correct response, discovered before any real result exists, is to make the
+sensitivity visible rather than to pick a side.
+
+With this addendum committed, Screen 3 is reported under both
+specifications from the first real run onward; no further decision on
+sub-condition (a) is open.
