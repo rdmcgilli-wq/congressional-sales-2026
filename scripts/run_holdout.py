@@ -154,10 +154,22 @@ def main() -> None:
     with_car = attach_car_bhar(screened, prices, factors, sic)
     size_proxies = _populate_size_proxies(with_car, prices)
     frame = model2.build_model2_frame(with_car, size_proxies, terms, PRIMARY_CAR_COL)
-    holdout_result = model2.run_model2(frame)
+    # run_model2_auto_year, not run_model2 directly: the 18-month holdout
+    # window can collapse to screened transactions within a single calendar
+    # year (it overlaps only 2 years to begin with, and nothing guarantees
+    # both survive Screens 1-3), which makes YearFE degenerate and crashes
+    # the unconditional primary spec before producing any result at all --
+    # see model2.run_model2_auto_year's docstring. holdout_result carries
+    # 'absorbed_year' so the printed result and T8 both say plainly which
+    # specification actually ran.
+    holdout_result = model2.run_model2_auto_year(frame)
     print(f"Holdout window: {HOLDOUT_START} .. {HOLDOUT_END} -- {screened.height} screened holdout "
           f"transactions (from a {result.sample.height}-transaction full-period funnel, "
           f"{screened_all.height} screened overall) -> {frame.height} estimated")
+    if not holdout_result["absorbed_year"]:
+        print("  NOTE: the holdout screened sample spans a single calendar year -- YearFE was "
+              "structurally degenerate and is NOT absorbed in this result (MemberFE and IndustryFE "
+              "still are). See model2.run_model2_auto_year.")
     print("HOLDOUT RESULT (Section 9 item 10 -- run once, report as-is):")
     print(holdout_result)
 

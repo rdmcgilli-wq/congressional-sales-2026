@@ -159,6 +159,40 @@ def test_run_model2_absorb_year_false_fits_on_a_single_year_subset():
     assert all(se > 0 for se in result["se"].values())
 
 
+def test_run_model2_auto_year_drops_yearfe_when_frame_spans_a_single_year():
+    # Regression: scripts/run_holdout.py's 18-month window can collapse to
+    # screened transactions within a single calendar year, which makes
+    # YearFE constant (one level) and crashes run_model2's unconditional
+    # primary spec with pyhdfe's "All fixed effects after the first one
+    # should have more than one level." run_model2_auto_year must detect
+    # this from the frame itself and drop YearFE rather than raise.
+    df = _panel_with_chamber_and_party_variation().filter(pl.col("year") == 2019)
+    assert df["year"].n_unique() == 1
+
+    result = model2.run_model2_auto_year(df)
+
+    assert result["absorbed_year"] is False
+    assert result["n_obs"] == df.height
+    core = {
+        "sale", "opportunistic", "sale_x_opportunistic", "committee_match",
+        "sale_x_committee_match", "log_size", "prior_12mo_return", "seniority_terms",
+    }
+    assert core.issubset(result["params"].keys())
+
+
+def test_run_model2_auto_year_keeps_yearfe_when_frame_spans_multiple_years():
+    df = _panel_with_chamber_and_party_variation()
+    assert df["year"].n_unique() > 1
+
+    result = model2.run_model2_auto_year(df)
+
+    assert result["absorbed_year"] is True
+    # Same specification run_model2(df) itself would fit -- auto_year must
+    # not silently change the primary spec when YearFE is NOT degenerate.
+    direct = model2.run_model2(df)
+    assert result["params"]["sale"] == pytest.approx(direct["params"]["sale"])
+
+
 def test_run_model2_fits_when_chamber_and_party_vary_across_members():
     # THE regression test for this fix. Before the fix, run_model2 built its
     # exog as pd.get_dummies(pdf[["size_band", "chamber", "party"]]) while

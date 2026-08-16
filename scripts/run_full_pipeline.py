@@ -357,8 +357,6 @@ def _write_figures(
         print(f"  F8 SKIPPED: fewer than {MIN_ALPHA_MONTHS} months of calendar-time portfolio returns "
               "overlap the factor series -- a four-factor fit there would be noise, not alpha.")
 
-    print("  F7 SKIPPED: see the comment in _write_figures -- per-year Model 2 needs an "
-          "estimator variant without the year fixed effect, which does not exist yet.")
     return figure_paths
 
 

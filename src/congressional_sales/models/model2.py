@@ -258,3 +258,36 @@ def run_model2(df: pl.DataFrame, absorb_year: bool = True) -> dict:
         "n_absorbed_year": pdf["year"].nunique(),
         "n_absorbed_industry": pdf["industry"].nunique(),
     }
+
+
+def run_model2_auto_year(df: pl.DataFrame) -> dict:
+    """`run_model2`, deciding `absorb_year` from `df` itself rather than
+    requiring the caller to know in advance whether YearFE will be
+    degenerate.
+
+    Built for `scripts/run_holdout.py`: Section 9 item 10's 18-month
+    holdout window can legitimately collapse to screened transactions
+    within a single calendar year depending on real disclosure timing (an
+    18-month window overlaps only 2 calendar years to begin with, and nothing
+    guarantees both are represented after Screens 1-3). YearFE is then
+    constant -- exactly the degenerate case `run_model2`'s own `absorb_year`
+    parameter exists for (see its docstring) -- and the pre-registered fit
+    would raise before producing any holdout result at all. Found via a
+    synthetic end-to-end test that happened to construct exactly this case,
+    not discovered by inspecting a real holdout result and patched
+    afterward; PRE_ANALYSIS_PLAN.md's "do not patch and re-run after seeing
+    the result" applies to changing the analysis in light of what it found,
+    not to fixing a crash that prevents it from running at all.
+
+    Checks `df["year"].n_unique()` directly rather than trying the full
+    spec first and catching the resulting error: the failure mode is fully
+    determined by this one count, so there is nothing to discover by
+    letting `AbsorbingLS` fail first.
+
+    Returns the same dict `run_model2` does, plus `absorbed_year: bool`, so
+    a caller (and T8) can tell which specification actually ran rather than
+    silently assuming the primary one.
+    """
+    absorb_year = df["year"].n_unique() > 1
+    result = run_model2(df, absorb_year=absorb_year)
+    return {**result, "absorbed_year": absorb_year}
