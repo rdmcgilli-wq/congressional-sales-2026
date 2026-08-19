@@ -7,11 +7,12 @@ tested, and validated end to end against synthetic and narrow live data —
 but not yet run at full scale. Nothing in this document should be read as
 a finding. Sections 7–9 (Results, Discussion, Conclusion) are placeholders
 and stay that way until two things happen, in order: resolution of the
-delisting-inclusive price-data question (outreach to a faculty contact is
-drafted but not yet sent as of this draft), and the full-universe run
-itself. Running the analysis on survivorship-biased data now would spend
-the pre-registration on output that would have to be discarded once a
-better price source is in hand.
+delisting-inclusive price-data question (a faculty contact has agreed to
+help; the specifics of that help, including a path to a delisting-
+inclusive source, are still being worked out as of this draft), and the
+full-universe run itself. Running the analysis on survivorship-biased
+data now would spend the pre-registration on output that would have to be
+discarded once a better price source is in hand.
 
 **For the author, before this goes further.** A referee — or a professor
 asked to look at the identification strategy — will ask about some subset
@@ -191,23 +192,66 @@ actionability. The report-date robustness check (Section 6.4, item 6) is
 a direct analogue of Pyun's own comparison, run here on the screened sale
 side rather than on purchases.
 
-**Peez (2026)** is the paper closest to this study's H4 specifically, and
-the one this section cannot yet fully place. From the abstract: Peez
-classifies congressional sales as jurisdictional or non-jurisdictional
-using a rule-based committee-industry crosswalk with session-level
-committee assignment, evaluates the two groups through calendar-time
-portfolios estimated with a Carhart four-factor model, and reports a
-statistically significant sell spread of 7.23% over a 20-trading-day
-horizon — jurisdictionally relevant sales followed by more negative
-abnormal returns, more pronounced in the House. *[This paragraph is
-incomplete pending the full text — SSRN blocks automated retrieval, and
-the abstract alone does not answer three questions the final version needs
-to settle: Peez's exact sample period and crosswalk construction, whether
-sales are screened for rebalancing, tax, or liquidation before testing or
-tested raw, and how a 20-day horizon compares to this paper's 30/90/180.
-That last point may be the most useful one to know before writing anything
-further — if Peez's effect is concentrated at 20 days, that is direct
-evidence about where to look, or not look, at longer horizons.]*
+**Peez (2026)** is the paper closest to this study's H4, and now that the
+full text is in hand rather than only the abstract, the comparison can be
+made precisely rather than provisionally. Peez classifies each
+congressional sale (and, separately, purchase) as jurisdictional or
+non-jurisdictional using a committee-industry crosswalk built at the
+level of the official committee code, mapped to granular Yahoo Finance
+industry categories rather than a broader sector scheme, with
+session-by-session dynamic assignment so a member's jurisdiction is
+evaluated as of the transaction rather than fixed over their career.
+Committees with broad, non-sector-specific mandates (Appropriations, the
+Budget Committee) are coded as general jurisdiction and excluded from
+matching entirely, rather than defaulted into a catch-all sector. Using
+Quiver Quantitative — the same vendor this study draws on — over a
+2013–2025 sample of 336 trading members and roughly 108,500 directional
+transactions, Peez evaluates jurisdictional and non-jurisdictional
+portfolios through calendar-time regressions on the Carhart four-factor
+model at 20-, 130-, and 255-trading-day horizons, and reports the
+paper's central result at the shortest of the three: a jurisdictional
+sell spread (non-jurisdictional minus jurisdictional sell alpha) of 7.23%
+over 20 trading days (t = 2.14), concentrated in the House (8.61%,
+t = 2.29) and not significant in the Senate (5.36%, t = 0.67). The spread
+narrows to marginal significance at 130 days and is indistinguishable
+from zero by 255 days — a decay pattern that bears directly on this
+paper's own horizon choice: if a comparable effect exists in this study's
+own sample, Peez's result suggests it should be strongest near this
+paper's 30-day window and largely gone by 180, not uniform across all
+three.
+
+Two design choices separate the papers directly. First, Peez does not
+screen sales before testing them — there is no rebalancing, tax-timing,
+or liquidation exclusion anywhere in its sample construction; the raw
+sell side is tested as disclosed. Peez's own discussion section
+acknowledges this directly, naming sector composition, crisis-period
+concentration, and active-trader concentration as competing explanations
+it "cannot remove completely," addressed only by splitting the sample
+after the fact (sub-periods, trader-frequency quartiles) rather than by
+excluding the confounded transactions before the primary test — precisely
+the gap this paper's four-screen funnel is built to close, and precisely
+why a raw, unscreened sell-side finding needs the screened comparison
+this paper reports alongside it. Second, Peez's own robustness checks are
+run against the aggregate jurisdictional-sell alpha, not the sell spread
+that is the paper's actual claimed result — an honest limitation Peez
+states outright ("they do not by themselves constitute a full robustness
+test of the incremental jurisdiction effect"), and one this paper avoids
+structurally, since its own primary test (β1 in Model 2) is already a
+within-model contrast, not a difference of two separately-run portfolios.
+
+Peez's trading-frequency split (top-quartile vs. bottom-quartile members
+by raw lifetime trade count, adapted from Barber and Odean's proxy for
+deliberate active management) tests a different mechanism than this
+paper's H3: it asks whether informed trading requires high overall
+activity, not whether a specific trade breaks a member's own predictable
+pattern. The two are not competing tests of the same claim. Peez also
+states only two ex ante hypotheses — the jurisdictional sell effect and
+House-versus-Senate heterogeneity — with the party and frequency splits
+explicitly framed as exploratory; nothing in the paper describes a
+pre-registration. On both counts this paper's scope is broader: four
+pre-registered hypotheses including the purchase-side asymmetry Peez does
+not formally test, and every screen, model, and output fixed before any
+result existed.
 
 Finally, H3 — the split between opportunistic and routine traders — is not
 new to congressional trading; it is imported from the corporate
@@ -243,8 +287,10 @@ the sale side. The gap those four leave — a pre-registered, sale-focused,
 fully screened test of informed selling in Congress — is this paper's
 contribution. Peez, appearing five weeks before this study's own
 pre-registration, is independent convergence on the same underlying
-question, not a scoop; the two papers are worth reading side by side once
-Peez's full text is in hand.
+question, not a scoop: an unscreened design finding a real short-horizon
+sell-side signal, on the same vendor's data this study also uses, is
+exactly the result that makes a screened test of the same question worth
+running rather than redundant with it.
 
 ---
 
@@ -621,9 +667,9 @@ Eggers, A. C., and Hainmueller, J. (2014). Political Capital: Corporate
 Connections and Stock Investments in the U.S. Congress, 2004–2008.
 *Quarterly Journal of Political Science*, 9(2), 169–202.
 
-Peez, L. (2026). The Impact of Committee Jurisdiction on Sell-Side
-Information Asymmetry. Working paper, SSRN. *[Full citation pending — see
-placeholder note, Section 2.]*
+Peez, L. (2026). Informed Trading in the U.S. Congress: The Impact of
+Committee Jurisdiction on Sell-Side Information Asymmetry. Esade Business
+School & OTH Regensburg working paper, SSRN, July 2026.
 
 Pyun, C. (2025). Congressional Trading, Informational Advantages, and
 Disclosure Timing. Working paper, SSRN.
