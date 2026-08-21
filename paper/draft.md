@@ -1,18 +1,19 @@
 # Do Congressional Sales Carry More Information Than Purchases?
 
 **Status of this draft.** Sections 2–6 and the Limitations section are
-written from the pre-analysis plan (`PRE_ANALYSIS_PLAN.md` v1.0,
-Addendum A, and Addendum B) and describe procedures that are implemented,
-tested, and validated end to end against synthetic and narrow live data —
-but not yet run at full scale. Nothing in this document should be read as
-a finding. Sections 7–9 (Results, Discussion, Conclusion) are placeholders
-and stay that way until two things happen, in order: resolution of the
-delisting-inclusive price-data question (a faculty contact has agreed to
-help; the specifics of that help, including a path to a delisting-
-inclusive source, are still being worked out as of this draft), and the
-full-universe run itself. Running the analysis on survivorship-biased
-data now would spend the pre-registration on output that would have to be
-discarded once a better price source is in hand.
+written from the pre-analysis plan (`PRE_ANALYSIS_PLAN.md` v1.0 and
+Addenda A, B, and C) and describe procedures that are implemented,
+tested, and validated end to end against synthetic, narrow-live, and (for
+the delisting-price patch specifically) real delisted-security data — but
+not yet run at full scale. Nothing in this document should be read as a
+finding. Sections 7–9 (Results, Discussion, Conclusion) are placeholders
+and stay that way until the full-universe run itself happens. The
+delisting-inclusive price question that previously blocked that run is
+resolved as of Addendum C (2026-08-21) — see Section 4 below — though a
+faculty contact's help, separately, is aimed at the paper's identification
+strategy and its path to submission, not at data access. Running the
+analysis before the full-universe run would spend the pre-registration on
+output that would have to be discarded once it happens.
 
 **For the author, before this goes further.** A referee — or a professor
 asked to look at the identification strategy — will ask about some subset
@@ -31,6 +32,13 @@ just point at the code comment that made the call.
   disclosed transaction data and has no visibility into a member's true,
   pre-existing portfolio (Addendum B). Know why both numbers are in the
   paper, not just one.
+- The delisting-data patch (Addendum C) prefers each security's "Q"
+  bankruptcy-suffix symbol over its plain ticker, and only falls back to
+  the plain ticker's own data if it resumes within 30 days of the last
+  known date. Know why "just re-query the plain ticker" was rejected: it
+  is a real, confirmed failure mode (Bed Bath & Beyond's own reused
+  ticker), not a hypothetical one, and a referee who knows the case may
+  ask about it directly.
 - The committee-to-industry mapping behind H4 is a hand-built, thirteen-
   entry keyword table — an explicit research judgment about which
   committees plausibly have jurisdiction over which Fama-French sectors,
@@ -383,27 +391,40 @@ exactly as it was before this addition. This is a genuine improvement with
 a real, permanent boundary, not a complete fix, and both regimes are
 disclosed rather than blended silently — see Limitations.
 
-**Known deviation, recorded before analysis: survivorship bias in price
-data.** No delisting-inclusive price source is in use as of this draft.
-The daily price feed drops a security once it is delisted, acquired, or
-ceases trading, rather than carrying a delisting return for it (the
-academic convention, following Shumway 1997 and its refinement in Shumway
-and Warther 1999, imputes a return — conventionally −30% to −55%
-depending on exchange and delisting reason — for the final period a
-delisting security is held). This is a materially more serious limitation
-for this study than for most: H1 predicts informed sales precede negative
-subsequent returns, and the single strongest instance of that
-prediction — a member selling ahead of a bankruptcy, a forced merger, or a
-delisting for cause — is exactly the transaction most likely to have its
-outcome deleted from a survivorship-biased feed rather than measured by
-it. Beaver, McNichols, and Price (2007) show this kind of omission is not
-random noise: delisting firm-years cluster disproportionately in the
-extreme decile of exactly the kind of variable this paper sorts on, which
-biases measured effect sizes systematically rather than merely adding
-variance to them. Resolving this — most plausibly through CRSP
-delisting-inclusive returns via an institutional affiliation — is a
-precondition for the full-scale run this paper reports on, not a caveat
-added after the fact.
+**Survivorship bias in price data, and its resolution (Addendum A →
+Addendum C).** The daily price feed's primary source, Tiingo, drops a
+security once it is delisted, acquired, or ceases trading, rather than
+carrying a delisting return for it. This would have been a materially
+more serious limitation for this study than for most: H1 predicts
+informed sales precede negative subsequent returns, and the single
+strongest instance of that prediction — a member selling ahead of a
+bankruptcy, a forced merger, or a delisting for cause — is exactly the
+transaction most likely to have its outcome deleted from a
+survivorship-biased feed rather than measured by it. Beaver, McNichols,
+and Price (2007) show this kind of omission is not random noise:
+delisting firm-years cluster disproportionately in the extreme decile of
+exactly the kind of variable this paper sorts on, which biases measured
+effect sizes systematically rather than merely adding variance to them.
+
+Addendum C resolves this without CRSP or an institutional affiliation.
+After the normal per-ticker ingestion, every ticker whose price history
+apparently ends more than 90 trading days before the sample period's
+close is patched with EOD Historical Data (EODHD), a commercial vendor
+confirmed — by live query, not by marketing claims — to retain delisted
+securities' full daily price history through their last trading day. The
+patch step queries the security's exchange-assigned "Q" bankruptcy-suffix
+symbol first, not its plain ticker: verified live before this addendum
+was written, a delisted security's plain ticker can be silently reused by
+an unrelated company, so querying it directly can return a wrong company's
+real, healthy trading history rather than an absent or obviously-missing
+one — confirmed concretely against Bed Bath & Beyond, whose original,
+bankrupt entity is only recoverable under its "BBBYQ" symbol, collapsing
+to fractions of a cent before final delisting, while the bare "BBBY"
+ticker was later reassigned to an unrelated, continuously-trading company.
+This is a partial fix, not a complete one: the "Q" suffix covers a formal
+Chapter 11 filing specifically, and a security delisted a different way
+may still be missed and is logged, by name, as an unresolved residual
+rather than silently dropped — see Limitations.
 
 ---
 
@@ -598,9 +619,17 @@ full-universe run. No number in this section exists yet.*
 
 ## Limitations
 
-- **Survivorship bias.** No delisting-inclusive price source is in use as
-  of this draft; this is the paper's most consequential open limitation
-  and is being actively addressed, not merely disclosed.
+- **Survivorship bias, partially resolved (Addendum C).** Tickers whose
+  price history appears to end early are patched with delisting-inclusive
+  data from a commercial vendor, preferring each security's bankruptcy
+  ("Q"-suffix) symbol over its plain ticker for the reason given in
+  Section 4 — a real, live-verified case of ticker reuse, not a
+  theoretical one. This covers securities delisted via a formal Chapter
+  11 filing; a security delisted a different way (e.g., a clean cash-out
+  acquisition settled after trading halts) may still be missed. Every
+  ticker the patch step cannot resolve is logged by name, not silently
+  dropped, and any that remain by the time of the full-scale run will be
+  listed here explicitly rather than folded into an aggregate count.
 - **Screen 3's cumulative-exposure sub-condition** is reported both
   applied and omitted (Addendum B), because it is built from disclosed
   transaction data with no visibility into a member's true pre-existing
