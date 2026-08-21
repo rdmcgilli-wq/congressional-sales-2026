@@ -416,3 +416,76 @@ sensitivity visible rather than to pick a side.
 With this addendum committed, Screen 3 is reported under both
 specifications from the first real run onward; no further decision on
 sub-condition (a) is open.
+
+---
+
+## Addendum C (2026-08-21): Delisting-inclusive price data
+
+**Committed:** 2026-08-21 (pre-analysis — see status note below)
+**Author:** Ryan McGillicuddy
+**Status:** Committed before any universe-wide or real-data analysis. The
+only ingestion performed as of this addendum remains the four-ticker
+mechanical pipeline check noted in Addendum A and the synthetic-warehouse
+end-to-end test in this project's own test suite, plus one live,
+single-ticker verification pull (Bed Bath & Beyond, described below) run
+specifically to confirm this addendum's mechanism before committing to
+it — not a universe-wide pull, and not informed by any result this study
+is testing for. This addendum resolves Section 3's "known deviation" and
+the corresponding Section 11 checklist item; it does not edit either
+section's original text, which remains as committed in v1.0.
+
+**Rule.** Tiingo (Section 3) remains the primary daily price source for
+every ticker in the study universe. Separately, after the normal
+per-ticker ingestion completes, every ticker whose price history
+apparently ends more than 90 trading days before the sample period's
+close is treated as a candidate delisting and patched with EOD Historical
+Data (EODHD), a commercially licensed vendor ($199/year, "EOD Historical
+Data — All World" tier) confirmed to retain full daily price history for
+delisted U.S. securities through their last trading day, rather than
+dropping them the way Tiingo does. The patch step queries EODHD for the
+security's own exchange-assigned "Q" symbol suffix first — the
+designation Nasdaq and NYSE attach specifically during a Chapter 11
+proceeding — and only falls back to the security's plain ticker symbol if
+that patched history resumes within 30 days of the last known date.
+Whichever series is used is written into the same `equity_eod` table
+every other price row lives in, keyed on the security's original ticker,
+so the sample funnel, the CAR engine, and every model downstream see the
+extended history with no change of their own.
+
+**Reasoning.** A ticker symbol can be reassigned to an entirely unrelated
+company after the original security delists, and this is not a
+theoretical risk: verified live before this addendum was written, EODHD's
+own data for the bare ticker "BBBY" is not Bed Bath & Beyond's real,
+bankrupt price history at all for most of 2023 — it is the price history
+of the company that later took over the same ticker after rebranding,
+trading normally and continuously through the exact months the original
+Bed Bath & Beyond was in bankruptcy proceedings. Querying a delisted
+security's plain ticker and assuming whatever comes back belongs to the
+company under study is therefore a *more* dangerous failure mode than
+Tiingo's silent drop: a wrong answer that looks like a right one, rather
+than a visible gap. The real, original entity's bankruptcy-period price
+history — collapsing from single dollars to fractions of a cent before
+final delisting — was only recoverable under its "Q"-suffixed symbol
+(`BBBYQ`), confirmed by live query before this addendum was written. The
+patch mechanism's ordering (Q-suffix preferred whenever it has any data;
+bare-ticker data used only if it resumes within a short window of the
+last known date) is built directly around this confirmed failure mode,
+not a hypothetical one.
+
+This is a partial fix, not a complete one, and is reported as such rather
+than assumed to close Section 3's deviation entirely. The "Q" suffix
+convention covers securities delisted via a formal Chapter 11 filing; a
+security delisted for a different reason — a clean cash-out acquisition
+settled after trading halts, a reverse-merger reissue under an unrelated
+new symbol, or any other pattern this addendum's live verification did
+not happen to encounter — may still be missed and left as a residual,
+disclosed gap rather than a silently-assumed-solved one. Every ticker
+this patch step cannot resolve is logged by name (a 0-row result from
+`patch_all_stale_tickers`, `sources/eodhd.py`), not dropped without a
+trace, matching Section 4's own "log every exclusion with a count"
+discipline.
+
+With this addendum committed, the sample no longer relies solely on a
+survivorship-biased price feed. The residual gap it does not close is
+disclosed in the paper's own Limitations section, alongside every ticker
+this run's patch step could not resolve.
