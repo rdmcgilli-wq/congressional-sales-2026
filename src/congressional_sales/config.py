@@ -63,6 +63,12 @@ TIINGO_API_TOKEN = os.getenv("TIINGO_API_TOKEN", "")
 RATE_LIMITS: dict[str, float] = {
     "api.quiverquant.com": 5.0,
     "api.tiingo.com": 5.0,
+    # eodhd.com is only ever called to patch the small, apparently-delisted
+    # subset of tickers (see sources/eodhd.py) -- Tiingo remains the primary
+    # price source for the whole universe -- so this stays well within the
+    # cheapest EODHD subscription tier's daily call budget even at a
+    # conservative per-second rate.
+    "eodhd.com": 3.0,
     "raw.githubusercontent.com": 5.0,
     "mba.tuck.dartmouth.edu": 2.0,
     # Primary government portals: deliberately very conservative. This

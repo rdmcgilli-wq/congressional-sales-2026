@@ -52,11 +52,20 @@ Copy `.env.example` to `.env` and fill in:
 ```
 QUIVER_API_TOKEN=...   # https://www.quiverquant.com/api-setup/ (Trader tier)
 TIINGO_API_TOKEN=...   # https://www.tiingo.com/ (free key covers ~500 symbols/month)
+EODHD_API_TOKEN=...    # https://eodhd.com/ ("EOD Historical Data -- All World", $19.99/mo or $199/yr)
 CONTACT_EMAIL=...      # sent as the User-Agent on every outbound request
 ```
 
 `.env` is git-ignored and must stay that way. Nothing else needs a key: the
 Ken French files and the legislator/committee YAML are unauthenticated.
+
+`EODHD_API_TOKEN` is only used to patch the small subset of tickers that
+turn out to be delisted (Section 4, step below) -- Tiingo remains the
+primary price source for the whole universe. See
+`PRE_ANALYSIS_PLAN.md` Addendum C for why this exists and
+`sources/eodhd.py`'s own docstring for a real, live-verified example
+(Bed Bath & Beyond) of why a delisted ticker cannot just be re-queried
+under its plain symbol.
 
 The warehouse lives in `data/` by default. Set `CONGRESS_SALES_HOME` to
 redirect it somewhere else (an external disk, a scratch dir for a trial
@@ -104,6 +113,22 @@ for t in universe:
     ingest_prices(t)
     ingest_congress_trades(t)
 ingest_sic_codes(universe)
+"
+
+# Run ONCE, after the loop above finishes for the whole universe -- not
+# per ticker. Finds every ticker whose Tiingo price history apparently
+# ends more than 90 days before the sample period's close (a proxy for
+# "this security was delisted"), and patches each one with EODHD data.
+# Writes straight into equity_eod via the same upsert every other
+# ingestion step uses, so nothing downstream needs to change to see the
+# extended history. See Addendum C.
+uv run python -c "
+from datetime import date
+from congressional_sales.sources.eodhd import patch_all_stale_tickers
+result = patch_all_stale_tickers(as_of=date.today())
+patched = {t: n for t, n in result.items() if n > 0}
+unresolved = {t: n for t, n in result.items() if n == 0}
+print(f'{len(patched)} tickers patched, {len(unresolved)} still unresolved: {sorted(unresolved)}')
 "
 ```
 
