@@ -202,10 +202,29 @@ def parse_historical_committee_assignments(raw, chamber: str, icpsr_crosswalk: p
     real, meaningful null carried through, not an ingestion failure; see
     HISTORICAL_COMMITTEE_ASSIGNMENTS_COVERAGE_END for how the caller
     (sample.classify.committee_match) is expected to treat it.
+
+    The House and Senate source files do NOT share a column name for this
+    field -- confirmed live against both real files before this was fixed:
+    the House file's column is "Date of Assignment", the Senate file's is
+    "Date of Appointment". An earlier version of this function assumed the
+    House name unconditionally, which raised a bare KeyError on every real
+    Senate ingestion; never caught by this module's own tests, since their
+    fixture used the House-only name for both chambers. Both are accepted
+    here rather than passed in by the caller, so a future third source with
+    yet another name fails loudly and specifically, not silently.
     """
     if raw.empty:
         return pl.DataFrame(schema=HISTORICAL_ASSIGNMENTS_SCHEMA)
-    cols = raw[["ID #", "Committee Name", "Date of Assignment", "Date of Termination"]].copy()
+    if "Date of Assignment" in raw.columns:
+        start_col = "Date of Assignment"
+    elif "Date of Appointment" in raw.columns:
+        start_col = "Date of Appointment"
+    else:
+        raise ValueError(
+            "Neither 'Date of Assignment' nor 'Date of Appointment' found in "
+            f"columns: {list(raw.columns)}"
+        )
+    cols = raw[["ID #", "Committee Name", start_col, "Date of Termination"]].copy()
     cols.columns = ["icpsr_id", "committee_name", "assignment_start", "assignment_end"]
     df = (
         pl.from_pandas(cols)

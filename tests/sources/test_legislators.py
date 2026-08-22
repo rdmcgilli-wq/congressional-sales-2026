@@ -187,6 +187,33 @@ def _stewart_woon_fixture(rows: list[dict]) -> pd.DataFrame:
     return pd.DataFrame(full_rows)
 
 
+def _stewart_woon_senate_fixture(rows: list[dict]) -> pd.DataFrame:
+    """Senate-shaped variant of _stewart_woon_fixture -- confirmed live
+    against the real senate_assignments_103-115-1.xls column names, which
+    are NOT identical to the House file's: "Date of Appointment" (not
+    "Date of Assignment"), "Committee Code" (not "Committee code"),
+    "Rank Within Party" (not "Rank Within Party Status"), "Party Code"
+    (not "Party"). Only the columns parse_historical_committee_assignments
+    actually reads need to be exactly right for this fixture's purpose;
+    the rest are carried over from the House base for convenience since
+    they're never inspected."""
+    base = {
+        "Congress": 115, "Committee Code": 305, "ID #": 20531, "Name": "Test Member",
+        "Maj/Min": 1, "Rank Within Party": 1, "Party Code": 100,
+        "Date of Appointment": pd.Timestamp("2017-01-03"), "Date of Termination": pd.NaT,
+        "Senior Party Member": 0, "Committee Seniority": 1, "Committee Period of Service": 1,
+        "Committee status at end of this Congress": None, "Committee continuity of assignment in next Congress": None,
+        "Appointment Citation": None, "Committee Name": "Agriculture, Nutrition, and Forestry",
+        "State Code": 6, "District": 83, "State Name": "VT", "Notes": None,
+    }
+    full_rows = []
+    for overrides in rows:
+        row = dict(base)
+        row.update(overrides)
+        full_rows.append(row)
+    return pd.DataFrame(full_rows)
+
+
 def _crosswalk(pairs: dict) -> pl.DataFrame:
     return pl.DataFrame(
         {"bioguide_id": list(pairs.keys()), "icpsr_id": list(pairs.values())},
@@ -222,6 +249,27 @@ def test_parse_historical_committee_assignments_drops_unresolvable_icpsr():
     assert df.is_empty()
 
 
+def test_parse_historical_committee_assignments_accepts_the_senate_column_name():
+    # THE regression test for the real bug this fix covers: the Senate
+    # file's start-date column is "Date of Appointment", not "Date of
+    # Assignment" -- confirmed live, and the original implementation
+    # raised a bare KeyError on this shape.
+    raw = _stewart_woon_senate_fixture([{"ID #": 20531, "Committee Name": "Agriculture, Nutrition, and Forestry"}])
+    crosswalk = _crosswalk({"C000001": 20531})
+    df = legislators.parse_historical_committee_assignments(raw, "senate", crosswalk)
+    assert df.height == 1
+    assert df["bioguide_id"][0] == "C000001"
+    assert df["chamber"][0] == "senate"
+    assert df["assignment_start"][0] == date(2017, 1, 3)
+
+
+def test_parse_historical_committee_assignments_raises_clearly_when_neither_column_exists():
+    raw = _stewart_woon_fixture([{"ID #": 20531}]).drop(columns=["Date of Assignment"])
+    crosswalk = _crosswalk({"C000001": 20531})
+    with pytest.raises(ValueError, match="Date of Assignment.*Date of Appointment"):
+        legislators.parse_historical_committee_assignments(raw, "house", crosswalk)
+
+
 def test_parse_historical_committee_assignments_on_empty_input_returns_typed_empty_frame():
     df = legislators.parse_historical_committee_assignments(pd.DataFrame(), "house", _crosswalk({}))
     assert df.is_empty()
@@ -238,11 +286,18 @@ def test_ingest_historical_committee_assignments_raises_without_a_crosswalk():
 def test_ingest_historical_committee_assignments_writes_table(monkeypatch):
     from congressional_sales import storage
 
-    crosswalk = _crosswalk({"C000001": 20531})
+    crosswalk = _crosswalk({"C000001": 20531, "C000002": 20999})
     storage.write("icpsr_crosswalk", crosswalk, key_cols=["bioguide_id"])
 
     house_raw = _stewart_woon_fixture([{"ID #": 20531, "Committee Name": "Agriculture"}])
-    empty_raw = pd.DataFrame(columns=house_raw.columns)
+    # Genuinely Senate-shaped, not an empty House-column frame: the whole
+    # point of this orchestration test is that BOTH real column layouts
+    # get exercised through the real ingest_historical_committee_assignments
+    # entry point, since an earlier version of this fixture used House
+    # columns for the "senate" case and never would have caught the real
+    # "Date of Appointment" vs "Date of Assignment" mismatch this file's
+    # own regression test (above) now covers at the parse layer.
+    senate_raw = _stewart_woon_senate_fixture([{"ID #": 20999, "Committee Name": "Finance"}])
 
     # The real xlrd/.xls round trip against MIT's actual files was verified
     # live during research, not re-tested here -- this test isolates the
@@ -250,18 +305,19 @@ def test_ingest_historical_committee_assignments_writes_table(monkeypatch):
     # written), which parse_historical_committee_assignments' own tests
     # above don't exercise. get_bytes is monkeypatched to a URL-tagged
     # marker; pandas.read_excel is monkeypatched to resolve that marker
-    # back to a house or an empty (senate) fixture frame.
+    # back to the house or the senate fixture frame.
     def fake_get_bytes(url, *a, **k):
         return b"house" if "house" in url else b"senate"
 
     def fake_read_excel(buf, engine=None, header=None):
-        return house_raw if buf.getvalue() == b"house" else empty_raw
+        return house_raw if buf.getvalue() == b"house" else senate_raw
 
     monkeypatch.setattr(legislators, "get_bytes", fake_get_bytes)
     monkeypatch.setattr("pandas.read_excel", fake_read_excel)
 
     n = legislators.ingest_historical_committee_assignments()
-    assert n == 1
-    got = storage.read("committee_assignments_historical")
-    assert got.height == 1
-    assert got["bioguide_id"][0] == "C000001"
+    assert n == 2
+    got = storage.read("committee_assignments_historical").sort("bioguide_id")
+    assert got.height == 2
+    assert got["bioguide_id"].to_list() == ["C000001", "C000002"]
+    assert got.filter(pl.col("bioguide_id") == "C000002")["chamber"][0] == "senate"
