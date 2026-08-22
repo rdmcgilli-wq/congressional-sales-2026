@@ -105,18 +105,40 @@ def fetch_eodhd(symbol: str, canonical_ticker: str, start: str | None = None) ->
     )
 
 
-def find_stale_tickers(prices: pl.DataFrame, as_of: date, gap_days: int = 90) -> list[str]:
-    """Tickers in `prices` whose last known price date is more than
-    `gap_days` before `as_of` -- the same staleness signal
-    verification.audits.delisting_audit uses, but standalone (no sample
-    frame required) so this patch step can run right after ingestion,
-    before any sample has been built.
+def find_stale_tickers(universe: list[str], prices: pl.DataFrame, as_of: date, gap_days: int = 90) -> list[str]:
+    """Tickers in `universe` that either have NO price data at all in
+    `prices`, or whose last known price date is more than `gap_days`
+    before `as_of`.
+
+    Takes the intended universe as an explicit argument rather than only
+    grouping over `prices` directly: a ticker with zero rows in `prices`
+    never appears in a group-by over `prices` at all, so an earlier
+    version of this function that only looked at `prices` was blind to it
+    -- and this is not a rare edge case for this study. Confirmed live
+    before this fix: Tiingo returns a completely empty result for some
+    delisted tickers (e.g. BBBY) rather than a partial history that later
+    goes stale, so "zero coverage" and "coverage that stopped" are both
+    real, common shapes of the same underlying gap and both need to reach
+    the EODHD patch step.
     """
-    if prices.is_empty():
+    if not universe:
         return []
-    last_price = prices.group_by("ticker").agg(pl.col("date").max().alias("last_price_date"))
-    stale = last_price.filter((pl.lit(as_of) - pl.col("last_price_date")).dt.total_days() > gap_days)
-    return stale["ticker"].to_list()
+    last_price = (
+        prices.group_by("ticker").agg(pl.col("date").max().alias("last_price_date"))
+        if not prices.is_empty()
+        else pl.DataFrame(schema={"ticker": pl.Utf8, "last_price_date": pl.Date})
+    )
+    universe_df = pl.DataFrame({"ticker": [t.upper() for t in universe]}, schema={"ticker": pl.Utf8})
+    joined = universe_df.join(last_price, on="ticker", how="left")
+    stale = joined.filter(
+        pl.col("last_price_date").is_null()
+        | ((pl.lit(as_of) - pl.col("last_price_date")).dt.total_days() > gap_days)
+    )
+    # Sorted, not left to whatever order the join/unique happens to
+    # produce: this list drives patch_all_stale_tickers' API-call order,
+    # and Section 11's reproducibility requirement ("reproduce end to end
+    # twice, confirm identical output") applies to this step too.
+    return sorted(stale["ticker"].unique().to_list())
 
 
 def patch_delisted_ticker(ticker: str, existing_prices: pl.DataFrame) -> int:
@@ -156,19 +178,26 @@ def patch_delisted_ticker(ticker: str, existing_prices: pl.DataFrame) -> int:
     return 0
 
 
-def patch_all_stale_tickers(as_of: date, gap_days: int = 90) -> dict[str, int]:
+def patch_all_stale_tickers(universe: list[str], as_of: date, gap_days: int = 90) -> dict[str, int]:
     """Orchestration entry point: reads the current equity_eod table,
-    finds every ticker find_stale_tickers flags, and runs
-    patch_delisted_ticker on each. Meant to run once, after the normal
-    per-ticker Tiingo ingestion loop and before the sample funnel --
-    every function it calls already writes straight to equity_eod via the
-    existing upsert, so nothing downstream (funnel, CAR engine) needs any
-    change to see the extended history.
+    finds every ticker in `universe` find_stale_tickers flags (no price
+    data at all, or none recent enough), and runs patch_delisted_ticker on
+    each. Meant to run once, after the normal per-ticker Tiingo ingestion
+    loop and before the sample funnel -- every function it calls already
+    writes straight to equity_eod via the existing upsert, so nothing
+    downstream (funnel, CAR engine) needs any change to see the extended
+    history.
+
+    `universe` must be passed explicitly (the full set of tickers this
+    run's ingestion was supposed to cover, e.g. from
+    sources.quiver.discover_ticker_universe) rather than inferred from
+    equity_eod's own contents -- see find_stale_tickers' docstring for why
+    a ticker with zero existing rows would otherwise be invisible.
 
     Returns {ticker: rows_patched} for every stale ticker found, including
     0 for ones neither EODHD variant could extend -- callers can use this
     to see exactly which tickers still have an unresolved gap.
     """
     prices = storage.read("equity_eod")
-    stale = find_stale_tickers(prices, as_of=as_of, gap_days=gap_days)
+    stale = find_stale_tickers(universe, prices, as_of=as_of, gap_days=gap_days)
     return {ticker: patch_delisted_ticker(ticker, prices) for ticker in stale}

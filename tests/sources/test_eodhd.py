@@ -60,12 +60,26 @@ def test_find_stale_tickers_flags_tickers_past_the_gap():
             _existing("STALE", [date(2023, 1, 1)]),  # far more than 90 days before as_of
         ]
     )
-    stale = eodhd.find_stale_tickers(prices, as_of=date(2024, 6, 1), gap_days=90)
+    stale = eodhd.find_stale_tickers(["FRESH", "STALE"], prices, as_of=date(2024, 6, 1), gap_days=90)
     assert stale == ["STALE"]
 
 
-def test_find_stale_tickers_empty_prices_returns_empty_list():
-    assert eodhd.find_stale_tickers(pl.DataFrame(schema=PRICE_SCHEMA), as_of=date(2024, 1, 1)) == []
+def test_find_stale_tickers_flags_tickers_with_zero_price_rows():
+    # Regression: a ticker Tiingo never covered at all (confirmed live --
+    # BBBY returns zero rows, not a partial history) has no row in
+    # `prices` to group on, so it must be caught via the universe list
+    # itself, not inferred from prices' own contents.
+    prices = _existing("HASDATA", [date(2024, 5, 15)])
+    stale = eodhd.find_stale_tickers(["HASDATA", "NODATA"], prices, as_of=date(2024, 6, 1), gap_days=90)
+    assert stale == ["NODATA"]
+
+
+def test_find_stale_tickers_empty_universe_returns_empty_list():
+    assert eodhd.find_stale_tickers([], pl.DataFrame(schema=PRICE_SCHEMA), as_of=date(2024, 1, 1)) == []
+
+
+def test_find_stale_tickers_empty_prices_flags_the_whole_universe():
+    assert eodhd.find_stale_tickers(["A", "B"], pl.DataFrame(schema=PRICE_SCHEMA), as_of=date(2024, 1, 1)) == ["A", "B"]
 
 
 def test_patch_delisted_ticker_prefers_q_suffix_when_it_has_data(monkeypatch):
@@ -163,8 +177,14 @@ def test_patch_all_stale_tickers_only_touches_stale_ones(monkeypatch):
         return []
 
     monkeypatch.setattr(eodhd, "get_json", fake_get_json)
-    result = eodhd.patch_all_stale_tickers(as_of=date(2024, 6, 1), gap_days=90)
+    # NODATA is in the universe but has never been written to equity_eod at
+    # all -- proves the zero-coverage case (find_stale_tickers' own
+    # regression above) actually reaches this orchestration function too.
+    result = eodhd.patch_all_stale_tickers(
+        universe=["FRESH", "STALEQ", "NODATA"], as_of=date(2024, 6, 1), gap_days=90
+    )
 
-    assert set(result.keys()) == {"STALEQ"}  # FRESH is within the gap and never touched
+    assert set(result.keys()) == {"STALEQ", "NODATA"}  # FRESH is within the gap and never touched
     assert result["STALEQ"] == 1
+    assert result["NODATA"] == 0
     assert not any("FRESH" in c for c in calls)
