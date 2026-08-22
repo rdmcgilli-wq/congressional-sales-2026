@@ -45,6 +45,7 @@ from __future__ import annotations
 import os
 from datetime import date, timedelta
 
+import httpx
 import polars as pl
 
 from .. import storage
@@ -90,7 +91,23 @@ def fetch_eodhd(symbol: str, canonical_ticker: str, start: str | None = None) ->
     params = {"api_token": token, "fmt": "json"}
     if start:
         params["from"] = start
-    rows = get_json(EODHD_URL.format(symbol=symbol), params=params)
+    # A 404 status ("Ticker Not Found") reaches here as a raised
+    # httpx.HTTPStatusError, NOT a 200-with-error-body -- confirmed live
+    # the hard way: the first full-universe run crashed here on a
+    # malformed "ticker" from the bulk feed's own known ~4% garbage rate
+    # (a bond CUSIP with a leading space, "%2037045XEF9Q.US" once
+    # URL-encoded). The docstring above already documented "empty frame
+    # for a 404" as the intended contract; this except clause is what
+    # actually delivers it, catching only a 404 specifically -- any other
+    # status (a persistent 5xx surviving http.py's own retries, for
+    # instance) is a genuine infrastructure problem, not a "no such
+    # ticker" signal, and is left to propagate.
+    try:
+        rows = get_json(EODHD_URL.format(symbol=symbol), params=params)
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 404:
+            return pl.DataFrame(schema=PRICE_SCHEMA)
+        raise
     if not isinstance(rows, list) or not rows:
         return pl.DataFrame(schema=PRICE_SCHEMA)
     df = pl.DataFrame(rows, infer_schema_length=None)
@@ -157,9 +174,23 @@ def patch_delisted_ticker(ticker: str, existing_prices: pl.DataFrame) -> int:
     consumer -- the funnel, the CAR engine -- sees the extended history
     with no changes of its own. Returns the number of rows written (0 if
     neither variant produced anything usable).
+
+    `existing_prices` may be a genuinely columnless empty frame (what
+    storage.read returns for a table that has never been written at
+    all, e.g. if this is called before any Tiingo ingestion has ever
+    run) -- filtering that on pl.col("ticker") raises ColumnNotFoundError
+    rather than behaving like an empty result, so that shape is checked
+    for explicitly rather than assumed away. In the real pipeline this
+    never happens (the Tiingo ingestion loop always populates equity_eod
+    first), but a defensive check costs nothing and this module already
+    learned the cost of assuming a "won't happen in practice" case away
+    once this run (see fetch_eodhd's 404 handling above).
     """
-    own = existing_prices.filter(pl.col("ticker") == ticker.upper())
-    last_known = own["date"].max() if not own.is_empty() else None
+    if "ticker" in existing_prices.columns:
+        own = existing_prices.filter(pl.col("ticker") == ticker.upper())
+        last_known = own["date"].max() if not own.is_empty() else None
+    else:
+        last_known = None
     start = (last_known + timedelta(days=1)).isoformat() if last_known else None
 
     q_df = fetch_eodhd(f"{ticker.upper()}Q.US", canonical_ticker=ticker, start=start)
@@ -195,9 +226,25 @@ def patch_all_stale_tickers(universe: list[str], as_of: date, gap_days: int = 90
     a ticker with zero existing rows would otherwise be invisible.
 
     Returns {ticker: rows_patched} for every stale ticker found, including
-    0 for ones neither EODHD variant could extend -- callers can use this
-    to see exactly which tickers still have an unresolved gap.
+    0 for a ticker neither EODHD variant could extend OR whose patch
+    attempt raised -- both are reported as an unresolved gap the same
+    way, not distinguished, since either way there is no extended history
+    to show for it. Errors are caught and logged per ticker rather than
+    aborting the whole run: the first full-universe run crashed here
+    outright on a single malformed "ticker" (see fetch_eodhd's docstring
+    for the specific case that was fixed), and 404 is very unlikely to be
+    the only failure mode a universe this size will ever produce -- a
+    single bad symbol should not cost every legitimate patch behind it in
+    the loop, matching the same per-ticker catch-and-continue discipline
+    scripts/ingest_universe.py's own price/trade ingestion loop already
+    uses.
     """
     prices = storage.read("equity_eod")
     stale = find_stale_tickers(universe, prices, as_of=as_of, gap_days=gap_days)
-    return {ticker: patch_delisted_ticker(ticker, prices) for ticker in stale}
+    result: dict[str, int] = {}
+    for ticker in stale:
+        try:
+            result[ticker] = patch_delisted_ticker(ticker, prices)
+        except Exception:  # noqa: BLE001 -- deliberately broad: log and keep going
+            result[ticker] = 0
+    return result

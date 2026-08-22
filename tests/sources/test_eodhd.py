@@ -43,14 +43,58 @@ def test_fetch_eodhd_without_token_is_a_clear_error(monkeypatch):
         eodhd.fetch_eodhd("AAPL.US", canonical_ticker="AAPL")
 
 
-def test_fetch_eodhd_returns_empty_frame_for_404_style_response(monkeypatch):
-    # EODHD returns a plain error body (not a list) for "Ticker Not Found" --
-    # must come back as a typed-empty frame, not raise or return garbage.
+def test_fetch_eodhd_returns_empty_frame_for_200_with_error_body(monkeypatch):
+    # One EODHD "not found" shape: a 200 status with a plain error body
+    # (not a list) -- must come back as a typed-empty frame, not raise.
     monkeypatch.setenv("EODHD_API_TOKEN", "tok")
     monkeypatch.setattr(eodhd, "get_json", lambda *a, **k: {"error": "Ticker Not Found."})
     df = eodhd.fetch_eodhd("NOSUCHTICKERQ.US", canonical_ticker="NOSUCHTICKER")
     assert df.is_empty()
     assert df.schema["date"] == pl.Date
+
+
+def test_fetch_eodhd_returns_empty_frame_for_a_real_404_status(monkeypatch):
+    # THE regression test for the real crash: EODHD's OTHER "not found"
+    # shape is an actual HTTP 404 status, which reaches get_json as a
+    # raised httpx.HTTPStatusError, not a parseable 200 body. Confirmed
+    # live the hard way -- the first full-universe ingestion run crashed
+    # here outright on a malformed "ticker" from the bulk feed's own
+    # ~4% garbage rate (a bond CUSIP with a leading space). Must come back
+    # as the same typed-empty frame the 200-with-error-body case produces,
+    # not propagate.
+    import httpx
+
+    monkeypatch.setenv("EODHD_API_TOKEN", "tok")
+
+    def raise_404(*a, **k):
+        request = httpx.Request("GET", "https://eodhd.com/api/eod/BADQ.US")
+        response = httpx.Response(404, request=request)
+        raise httpx.HTTPStatusError("404 Not Found", request=request, response=response)
+
+    monkeypatch.setattr(eodhd, "get_json", raise_404)
+    df = eodhd.fetch_eodhd("BADQ.US", canonical_ticker="BAD")
+    assert df.is_empty()
+    assert df.schema["date"] == pl.Date
+
+
+def test_fetch_eodhd_reraises_non_404_http_errors(monkeypatch):
+    # A 404 specifically means "no such ticker" and is swallowed; any
+    # other status is a genuine infrastructure problem (e.g. a persistent
+    # 5xx that survived http.py's own retries) and must NOT be silently
+    # treated as "no data" -- that would hide a real outage as a clean
+    # empty result.
+    import httpx
+
+    monkeypatch.setenv("EODHD_API_TOKEN", "tok")
+
+    def raise_500(*a, **k):
+        request = httpx.Request("GET", "https://eodhd.com/api/eod/AAPL.US")
+        response = httpx.Response(500, request=request)
+        raise httpx.HTTPStatusError("500 Server Error", request=request, response=response)
+
+    monkeypatch.setattr(eodhd, "get_json", raise_500)
+    with pytest.raises(httpx.HTTPStatusError):
+        eodhd.fetch_eodhd("AAPL.US", canonical_ticker="AAPL")
 
 
 def test_find_stale_tickers_flags_tickers_past_the_gap():
@@ -151,6 +195,22 @@ def test_patch_delisted_ticker_ignores_bare_ticker_data_resuming_far_later(monke
     assert n == 0
 
 
+def test_patch_delisted_ticker_handles_a_genuinely_columnless_existing_prices_frame(monkeypatch):
+    # storage.read returns a bare pl.DataFrame() (no columns at all, not
+    # just zero rows) for a table that has never been written -- filtering
+    # that on pl.col("ticker") raises ColumnNotFoundError rather than
+    # behaving like an empty result. Never happens in the real pipeline
+    # (Tiingo ingestion always populates equity_eod first), but must not
+    # crash if called before any ingestion at all.
+    monkeypatch.setenv("EODHD_API_TOKEN", "tok")
+    monkeypatch.setattr(
+        eodhd, "get_json",
+        lambda *a, **k: [{"date": "2023-09-01", "open": 1.0, "high": 1.0, "low": 1.0, "close": 1.0, "adjusted_close": 1.0, "volume": 1.0}],
+    )
+    n = eodhd.patch_delisted_ticker("NEW", pl.DataFrame())
+    assert n == 1
+
+
 def test_patch_delisted_ticker_returns_zero_when_neither_variant_has_data(monkeypatch):
     monkeypatch.setenv("EODHD_API_TOKEN", "tok")
     monkeypatch.setattr(eodhd, "get_json", lambda *a, **k: [])
@@ -188,3 +248,36 @@ def test_patch_all_stale_tickers_only_touches_stale_ones(monkeypatch):
     assert result["STALEQ"] == 1
     assert result["NODATA"] == 0
     assert not any("FRESH" in c for c in calls)
+
+
+def test_patch_all_stale_tickers_does_not_abort_the_run_on_one_ticker_raising(monkeypatch):
+    # THE regression test for the real crash: the first full-universe
+    # ingestion run's delisting-patch step died outright on the first
+    # malformed ticker it tried (an unhandled exception from
+    # patch_delisted_ticker), leaving every legitimate patch behind it in
+    # the loop unprocessed. A single bad ticker must be logged as an
+    # unresolved (0) result and the loop must continue to the rest.
+    from congressional_sales import storage
+
+    monkeypatch.setenv("EODHD_API_TOKEN", "tok")
+    # Seed equity_eod with a properly-typed (if unrelated) row so
+    # existing_prices has real columns -- isolates THIS test's failure
+    # mode (get_json raising) from the separate columnless-frame case its
+    # own dedicated test above covers.
+    storage.write("equity_eod", _existing("UNRELATED", [date(2020, 1, 1)]), key_cols=["ticker", "date"])
+
+    def fake_get_json(url, params=None, **kwargs):
+        if "BADQ.US" in url:
+            raise RuntimeError("simulated unexpected failure")
+        if "GOODQ.US" in url:
+            return [{"date": "2023-02-01", "open": 1.0, "high": 1.0, "low": 1.0, "close": 1.0, "adjusted_close": 1.0, "volume": 1.0}]
+        return []
+
+    monkeypatch.setattr(eodhd, "get_json", fake_get_json)
+    # Sorted order (find_stale_tickers' own contract) puts "BAD" before
+    # "GOOD" alphabetically, so this also proves the loop keeps going
+    # PAST a failure, not just that a failure is caught in isolation.
+    result = eodhd.patch_all_stale_tickers(universe=["BAD", "GOOD"], as_of=date(2024, 6, 1), gap_days=90)
+
+    assert result["BAD"] == 0
+    assert result["GOOD"] == 1
