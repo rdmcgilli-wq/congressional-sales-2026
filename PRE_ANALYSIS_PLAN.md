@@ -489,3 +489,82 @@ With this addendum committed, the sample no longer relies solely on a
 survivorship-biased price feed. The residual gap it does not close is
 disclosed in the paper's own Limitations section, alongside every ticker
 this run's patch step could not resolve.
+
+---
+
+## Addendum D (2026-08-22): Full-universe ingestion, delisting patch results
+
+**Committed:** 2026-08-22 (pre-analysis — see status note below)
+**Author:** Ryan McGillicuddy
+**Status:** The full disclosure-defined universe (Addendum A) has now been
+ingested and the Addendum C delisting patch run against it in full — this
+is real data processing at full scale, not a narrow mechanical check like
+the ones prior addenda relied on. It is still not the study's analysis:
+no sample funnel, screen, model, or hypothesis test has been run against
+this data. This addendum records what the ingestion and patch mechanism
+actually produced, verified, not what was expected. It does not edit
+Addendum C, which remains as committed — the mechanism it describes is
+unchanged; this addendum reports the result of applying it.
+
+**What happened.** `scripts/ingest_universe.py`'s first run crashed
+partway through the delisting-patch step on an unhandled HTTP 404 for a
+malformed "ticker" (a bond CUSIP from the bulk feed's own known garbage
+rate). The per-ticker price/trade/SIC ingestion that ran before the crash
+was unaffected (idempotent upsert; nothing was lost) and is not re-run
+here. Three real bugs surfaced and were fixed before the patch step
+completed successfully, each with its own regression test: the crashing
+404 case itself; `find_stale_tickers` being blind to a ticker with zero
+Tiingo coverage at all (not merely stale coverage — confirmed common,
+not rare); and the bare-ticker fallback refusing to even attempt a ticker
+with no prior Tiingo history to measure a resumption gap against. A
+separate, unrelated bug was also found and fixed during this same
+ingestion: the Senate historical-committee-assignments source
+(`sources/legislators.py`, added after Addendum B) uses a different
+column name than the House source for the same field — "Date of
+Appointment" vs. "Date of Assignment" — which crashed on the first real
+Senate ingestion; both are now accepted.
+
+**Verified results, not estimated.** 5,046 tickers discovered and
+ingested (Addendum A's rule, applied for real for the first time). 1,582
+flagged as apparently delisted (no recent price data). Of those:
+
+- **336 genuinely patched** — EODHD found real price history beyond what
+  Tiingo had, via the "Q" (Chapter 11) symbol for a confirmed bankruptcy,
+  or directly via the bare ticker where Tiingo had no prior history to
+  protect against a symbol-reuse risk.
+- **75 remain with zero data anywhere** — Tiingo never covered them and
+  EODHD has nothing under either symbol variant either; thinly-covered or
+  obscure names, logged by ticker in this run's own output, not folded
+  into an aggregate count.
+- **The remaining ~1,171** most plausibly already have their true final
+  price correctly captured by the data already in hand, not a gap the
+  patch step failed to close. Confirmed directly, not assumed, for two
+  contrasting real cases: ABMD (Abiomed), a clean acquisition, where
+  Tiingo's own last price ($381.02) matches EODHD's independently to the
+  cent; and FRC (First Republic Bank), a regulator-seized bank with no
+  Chapter 11 filing at all (confirmed zero rows under any "Q" symbol),
+  where EODHD's own bare-ticker data ends at the exact same date and
+  price ($3.51) Tiingo already has — there is no further price discovery
+  to recover from any vendor once trading in a seized institution simply
+  stops. An earlier internal check that flagged "unresolved distress" by
+  comparing a ticker's price 60 sessions before its cutoff to its last
+  price conflated a genuine remaining gap with this already-complete
+  case, and separately was misled by a Tiingo vendor artifact (a few
+  trailing $0.00/zero-volume placeholder rows after a security's real
+  last trade, confirmed live for three delistings that were, in fact,
+  ordinary fairly-priced acquisitions) into flagging clean delistings as
+  distressed. Both are corrected in this addendum's own count above, not
+  carried into the paper.
+
+**What this does and does not establish.** It establishes that the
+Addendum C mechanism works as designed at full scale, not only on the
+single hand-picked case (BBBY) it was built and tested against, and that
+the actionable, real gap — Tiingo data genuinely truncated before a
+security's true outcome, with no vendor recovery found — is small
+relative to the full universe once already-complete cases are correctly
+excluded from the count. It does not establish anything about H1, H2,
+H3, or H4: no hypothesis test has been run, and this addendum reports on
+data completeness only. The 75-ticker zero-data list and any residual
+that a future, more careful pass finds still genuinely incomplete belong
+in the paper's Limitations section by name when the real analysis runs,
+exactly as Addendum C already commits to.
