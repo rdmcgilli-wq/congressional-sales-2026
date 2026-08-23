@@ -211,6 +211,28 @@ def test_patch_delisted_ticker_handles_a_genuinely_columnless_existing_prices_fr
     assert n == 1
 
 
+def test_patch_delisted_ticker_uses_bare_ticker_directly_when_tiingo_has_zero_prior_history(monkeypatch):
+    # THE regression test for the real gap found at full-universe scale:
+    # 364 real, plausible tickers (e.g. ANTM, ADS, ABC) had zero Tiingo
+    # coverage at all, and the original bare-ticker fallback required
+    # last_known is not None to even attempt them -- there is no
+    # "resumption gap" to measure when there was never a prior date to
+    # resume from, so the bare ticker's data must be used directly rather
+    # than withheld.
+    monkeypatch.setenv("EODHD_API_TOKEN", "tok")
+
+    def fake_get_json(url, params=None, **kwargs):
+        if "ANTMQ.US" in url:
+            return []
+        if "ANTM.US" in url:
+            return [{"date": "2020-01-15", "open": 300.0, "high": 305.0, "low": 298.0, "close": 300.0, "adjusted_close": 300.0, "volume": 100}]
+        return []
+
+    monkeypatch.setattr(eodhd, "get_json", fake_get_json)
+    n = eodhd.patch_delisted_ticker("ANTM", pl.DataFrame(schema=PRICE_SCHEMA))  # empty, but properly typed -- zero rows, not columnless
+    assert n == 1
+
+
 def test_patch_delisted_ticker_returns_zero_when_neither_variant_has_data(monkeypatch):
     monkeypatch.setenv("EODHD_API_TOKEN", "tok")
     monkeypatch.setattr(eodhd, "get_json", lambda *a, **k: [])

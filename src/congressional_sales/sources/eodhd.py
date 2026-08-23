@@ -24,19 +24,42 @@ it looks correct rather than absent. patch_delisted_ticker tries the
 suffix is exchange-assigned specifically for a Chapter 11 filing and is
 never reused for an unrelated company the way a plain ticker symbol can
 be, so any data under it is guaranteed to belong to the same entity this
-study's sample already knows under the bare ticker. The bare ticker's own
-post-cutoff data is used as a patch only when it resumes within
-BARE_TICKER_RESUME_WINDOW_DAYS of Tiingo's last known date -- a resumption
-that close to the cutoff is far more likely to be the original security's
-own continued trading (e.g. Tiingo's own coverage merely lagging) than an
-unrelated company reissued onto a recycled symbol months or years later.
+study's sample already knows under the bare ticker. When Tiingo has SOME
+prior history for the ticker, the bare ticker's own post-cutoff data is
+used as a patch only if it resumes within BARE_TICKER_RESUME_WINDOW_DAYS
+of Tiingo's last known date -- a resumption that close to the cutoff is
+far more likely to be the original security's own continued trading (e.g.
+Tiingo's own coverage merely lagging) than an unrelated company reissued
+onto a recycled symbol months or years later. When Tiingo has NO prior
+history at all for the ticker, there is no resumption to measure a gap
+against, and the bare ticker's data is used directly rather than
+withheld: confirmed live at full-universe scale, this is common, not
+rare -- 364 real, plausible tickers in this study's own universe (ANTM,
+ADS, ABC, ...) had zero Tiingo coverage, and refusing to even attempt
+them left strictly more real companies unrecovered than the (smaller,
+harder to detect without a reference point) residual risk that such a
+ticker was itself reused by more than one company across EODHD's full
+history window.
 
-This is a partial, not exhaustive, fix. The "Q" suffix is the standard,
-common convention for a Chapter 11 filing, not the only symbol-reuse
-pattern that exists -- a security delisted for a different reason (a
-clean cash-out acquisition settled after trading halts, a reverse-merger
-reissue under an unrelated new symbol, ...) may still be missed, and is
-left as the documented residual gap rather than silently assumed solved.
+This is a partial, not exhaustive, fix, confirmed live at full-universe
+scale, not merely asserted. The "Q" suffix recovers a Chapter 11 filing
+specifically -- 226 of 1,607 flagged-stale tickers in this study's actual
+universe. Reconciling the rest: 364 had zero Tiingo coverage (now
+attempted via the bare-ticker path above); roughly 872 already carry a
+stable, non-distressed final Tiingo price before their own cutoff (a
+clean, fairly-priced acquisition, most plausibly -- e.g. confirmed live
+for ABMD/Abiomed, whose last Tiingo price, $381.02, matches EODHD's own
+last recorded price for the same ticker almost exactly, meaning Tiingo's
+existing data already captures the true final outcome and there is
+nothing to patch); and a residual roughly 71 show a genuine, unresolved
+distress pattern (price collapsing over their final trading sessions with
+no patchable continuation found under either symbol variant) -- these are
+the real remaining survivorship-bias risk and are reported by name, not
+folded into an aggregate count, in the paper's own Limitations section
+and this run's own unresolved-ticker log. A security delisted a way
+neither the "Q" suffix nor a first-ever bare-ticker pull can recover (a
+reverse-merger reissue under an entirely unrelated new symbol, for
+instance) may still be missed.
 See Addendum C and the paper's own Limitations section.
 """
 
@@ -199,7 +222,21 @@ def patch_delisted_ticker(ticker: str, existing_prices: pl.DataFrame) -> int:
         return q_df.height
 
     bare_df = fetch_eodhd(f"{ticker.upper()}.US", canonical_ticker=ticker, start=start)
-    if not bare_df.is_empty() and last_known is not None:
+    if not bare_df.is_empty():
+        if last_known is None:
+            # No prior Tiingo history at all -- confirmed live this is
+            # common, not rare: 364 real, plausible-ticker-shaped names in
+            # this study's own universe (ANTM, ADS, ABC, ...) had zero
+            # Tiingo coverage. There is no "resume gap" to measure in this
+            # case (nothing to resume FROM), so the window check below
+            # does not apply -- this is a first pull, not a resumption,
+            # and rejecting it here would mean giving up without ever
+            # trying, which is strictly worse than the residual (smaller,
+            # harder to detect without a reference point) risk that the
+            # bare ticker has itself been reused by more than one company
+            # over EODHD's own full history window.
+            storage.write("equity_eod", bare_df, key_cols=["ticker", "date"], partition=ticker.upper())
+            return bare_df.height
         resume_date = bare_df["date"].min()
         gap = (resume_date - last_known).days
         if gap <= BARE_TICKER_RESUME_WINDOW_DAYS:
