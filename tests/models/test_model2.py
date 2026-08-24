@@ -251,6 +251,30 @@ def test_build_model2_frame_reads_industry_and_prior_return_from_the_sample():
     assert out["prior_12mo_return"][0] == pytest.approx(-0.33)
 
 
+def test_build_model2_frame_buckets_a_non_canonical_amount_range_into_other():
+    # THE regression test for the real crash: the live full-universe
+    # congress_trades table carries 467 distinct amount_range values, only
+    # 10 of which are the canonical STOCK Act disclosure bands -- the rest
+    # (a specific dollar figure, a lower-bound-only figure, stray metadata
+    # text) are near-singleton in the real data and, kept as their own
+    # size_band dummy level, become perfectly collinear with their own
+    # row's residual once fixed effects are absorbed
+    # (linearmodels.panel.utility.AbsorbingEffectError, confirmed live
+    # against the real warehouse). A canonical band must still pass
+    # through unchanged.
+    out = model2.build_model2_frame(
+        _car_sample(amount_range=["$333.37"]),
+        size_proxies={("AAPL", date(2020, 6, 1)): 100_000.0}, terms=_terms(), car_col="car",
+    )
+    assert out["size_band"][0] == "Other"
+
+    canonical = model2.build_model2_frame(
+        _car_sample(amount_range=["$15,001 - $50,000"]),
+        size_proxies={("AAPL", date(2020, 6, 1)): 100_000.0}, terms=_terms(), car_col="car",
+    )
+    assert canonical["size_band"][0] == "$15,001 - $50,000"
+
+
 @pytest.mark.parametrize("missing", ["industry", "prior_12mo_return"])
 def test_build_model2_frame_raises_when_required_car_columns_are_missing(missing):
     # These two columns are produced by events.attach.attach_car_bhar (Task 22).

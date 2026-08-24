@@ -77,8 +77,19 @@ def run_robustness_suite(
 
     checks.append(_run_primary("excl_2020_2021", df.filter(~pl.col("report_date").dt.year().is_in([2020, 2021])), size_proxies, terms, car_col))
 
-    for band in df["amount_range"].unique().to_list():
-        checks.append(_run_primary(f"size_band_{band}", df.filter(pl.col("amount_range") == band), size_proxies, terms, car_col))
+    # Bucketed through model2.canonical_size_band, not raw amount_range:
+    # confirmed live that the real full-universe congress_trades table
+    # carries 467 distinct amount_range values, of which only 10 are the
+    # canonical STOCK Act disclosure bands -- the rest are malformed/
+    # non-standard values from Quiver's own bulk feed, almost all
+    # appearing only once or twice in the whole table. Iterating over the
+    # raw values here would turn this into ~467 mostly-trivial checks
+    # (each hitting _run_primary's own df.height<10 guard immediately)
+    # instead of the ~11 meaningful ones (the 10 real bands plus one
+    # "Other" bucket) this check is actually meant to report.
+    banded = df.with_columns(pl.col("amount_range").map_elements(model2.canonical_size_band, return_dtype=pl.Utf8).alias("_size_band"))
+    for band in sorted(banded["_size_band"].unique().to_list()):
+        checks.append(_run_primary(f"size_band_{band}", banded.filter(pl.col("_size_band") == band), size_proxies, terms, car_col))
 
     top_tickers = _most_frequent(df, "ticker", 10)
     checks.append(_run_primary("excl_top10_tickers", df.filter(~pl.col("ticker").is_in(top_tickers)), size_proxies, terms, car_col))

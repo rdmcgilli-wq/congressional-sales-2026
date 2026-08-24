@@ -78,6 +78,45 @@ import pandas as pd
 import polars as pl
 
 
+# Confirmed live against the real full-universe congress_trades table:
+# amount_range takes 467 DISTINCT string values, but only these 10 are the
+# canonical STOCK Act disclosure bands -- covering 99,788 of 100,272 rows
+# (99.5%). The remaining ~484 rows carry malformed/non-standard values from
+# Quiver's own bulk feed -- a specific dollar figure like "$333.37" instead
+# of a range, a lower-bound-only figure like "$15,001" with no upper bound,
+# a stray metadata string, or a near-miss formatting variant of a real band
+# like "$15,000 - $50,000" -- almost all appearing only once or twice in the
+# whole table. As a size_band DUMMY regressor, a near-singleton category is
+# not just noisy: it becomes perfectly collinear with its own row's
+# residual once MemberFE/YearFE/IndustryFE are absorbed, which is exactly
+# what crashed run_model2 on the real full-scale sample
+# (linearmodels.panel.utility.AbsorbingEffectError, confirmed live).
+CANONICAL_AMOUNT_RANGES = frozenset(
+    {
+        "$1,001 - $15,000",
+        "$15,001 - $50,000",
+        "$50,001 - $100,000",
+        "$100,001 - $250,000",
+        "$250,001 - $500,000",
+        "$500,001 - $1,000,000",
+        "$1,000,001 - $5,000,000",
+        "$5,000,001 - $25,000,000",
+        "$25,000,001 - $50,000,000",
+        "Over $50,000,000",
+    }
+)
+
+
+def canonical_size_band(amount_range: str) -> str:
+    """Every non-canonical amount_range value is bucketed into a single
+    "Other" size_band instead of kept as its own dummy level. size_band is
+    a CONTROL variable, not this study's object of interest, so this
+    changes nothing about the sample itself (Section 5's funnel/screens
+    are untouched) -- only how the ~0.5% of transactions with a malformed
+    disclosed amount are coded for this one control."""
+    return amount_range if amount_range in CANONICAL_AMOUNT_RANGES else "Other"
+
+
 def build_model2_frame(
     sample_with_car: pl.DataFrame,
     size_proxies: dict,
@@ -151,7 +190,7 @@ def build_model2_frame(
                 "committee_match": 1 if row.get("committee_match") else 0,
                 "log_size": math.log(size) if size and size > 0 else None,
                 "prior_12mo_return": row["prior_12mo_return"],
-                "size_band": row["amount_range"],
+                "size_band": canonical_size_band(row["amount_range"]),
                 # chamber/party are DATA-ONLY passengers here: part of this
                 # function's documented output contract (descriptive tables,
                 # heterogeneity splits), but never regressors in run_model2 --

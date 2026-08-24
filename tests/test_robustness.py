@@ -112,6 +112,29 @@ def test_run_robustness_suite_produces_one_row_per_check_and_the_full_sample():
     assert full_row["n"][0] == 80
 
 
+def test_run_robustness_suite_buckets_non_canonical_amount_range_values_into_one_other_check():
+    # THE regression test for the real crash this fixed: the live
+    # full-universe congress_trades table carries 467 distinct
+    # amount_range values, only 10 of which are the canonical STOCK Act
+    # bands -- the rest are near-singleton malformed values from Quiver's
+    # own bulk feed. Before this fix, this loop iterated raw amount_range
+    # values directly, so a real run would produce ~467 mostly-trivial
+    # size_band_* checks instead of the ~11 meaningful ones. Give several
+    # distinct rows their own distinct garbage amount_range value and
+    # confirm they collapse into a single "size_band_Other" check, not one
+    # row per garbage value.
+    sample, terms, size_proxies = _robustness_fixture()
+    garbage_values = ["$333.37", "$15,001", "$1.00", "$982.18", "$23.95"]
+    original = sample["amount_range"].to_list()
+    new_amount_range = [garbage_values[i] if i < len(garbage_values) else original[i] for i in range(len(original))]
+    sample = sample.with_columns(pl.Series("amount_range", new_amount_range))
+    result = robustness.run_robustness_suite(sample, size_proxies, terms)
+    labels = result["check"].to_list()
+    assert labels.count("size_band_Other") == 1
+    for garbage in garbage_values:
+        assert f"size_band_{garbage}" not in labels
+
+
 def test_run_robustness_suite_omits_filing_date_entry_when_no_variant_is_passed():
     sample, terms, size_proxies = _robustness_fixture()
     result = robustness.run_robustness_suite(sample, size_proxies, terms)
