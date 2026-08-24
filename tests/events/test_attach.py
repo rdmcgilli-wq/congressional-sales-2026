@@ -5,7 +5,7 @@ from datetime import date, timedelta
 import polars as pl
 import pytest
 
-from congressional_sales.events import attach
+from congressional_sales.events import attach, car
 
 PRICE_SCHEMA = {
     "ticker": pl.Utf8, "date": pl.Date, "open": pl.Float64, "high": pl.Float64,
@@ -196,3 +196,83 @@ def test_attach_car_bhar_report_date_variant_uses_report_date_as_event_date():
     by_report_date = attach.attach_car_bhar(sample, prices, factors, sic, event_date_col="report_date")
     assert by_transaction_date["car_market_30"][0] is None  # not enough forward sessions from day 245 of 250
     assert by_report_date["car_market_30"][0] is not None  # plenty of forward sessions from day 200
+
+
+def _sector_fixture():
+    """EVENT + two real same-sector peers (SIC 7372, Business Equipment)
+    with DIFFERENT dollar volumes, plus UNRELATED in a different sector
+    (SIC 2911, Energy) and SPY as the market anchor -- enough peer
+    structure for size_industry_matched_car's own decile logic to have
+    something real to match against, unlike this file's other fixtures
+    (single-ticker, no SIC peers at all)."""
+    sessions = [date(2020, 1, 1) + timedelta(days=i) for i in range(100)]
+    price_rows = []
+    for i, d in enumerate(sessions):
+        price_rows.append({"ticker": "EVENT", "date": d, "open": 1.0, "high": 1.0, "low": 1.0, "close": 100.0 + i, "volume": 100_000.0, "close_adj": 100.0 + i})
+        price_rows.append({"ticker": "PEERA", "date": d, "open": 1.0, "high": 1.0, "low": 1.0, "close": 50.0 + i * 0.5, "volume": 90_000.0, "close_adj": 50.0 + i * 0.5})
+        price_rows.append({"ticker": "PEERB", "date": d, "open": 1.0, "high": 1.0, "low": 1.0, "close": 80.0 + i * 0.8, "volume": 110_000.0, "close_adj": 80.0 + i * 0.8})
+        price_rows.append({"ticker": "UNRELATED", "date": d, "open": 1.0, "high": 1.0, "low": 1.0, "close": 200.0 - i, "volume": 500_000.0, "close_adj": 200.0 - i})
+        price_rows.append({"ticker": "SPY", "date": d, "open": 1.0, "high": 1.0, "low": 1.0, "close": 300.0, "volume": 1_000_000.0, "close_adj": 300.0})
+    prices = pl.DataFrame(price_rows, schema=PRICE_SCHEMA)
+    sic = pl.DataFrame(
+        {
+            "ticker": ["EVENT", "PEERA", "PEERB", "UNRELATED"], "cik": [1, 2, 3, 4],
+            "sic_code": ["7372", "7372", "7372", "2911"], "sic_description": ["x"] * 4,
+        },
+        schema=SIC_SCHEMA,
+    )
+    return sessions, prices, sic
+
+
+def test_attach_car_bhar_size_industry_matches_the_unsliced_computation_exactly():
+    # THE regression test for the real full-universe performance fix:
+    # attach_car_bhar now slices `prices` per sector before calling
+    # car.py's functions (confirmed live -- passing the full, unsliced
+    # equity_eod table through unchanged made the real pipeline run a
+    # plausible multi-day computation, dominated by size_industry_matched_
+    # car/bhar's own peer-group scan, up to 487 tickers in this study's
+    # real "Money" sector, recomputed per horizon per metric per
+    # transaction with no caching at all). This must not change the
+    # computed value -- car.py itself is untouched, only what gets passed
+    # to it -- so the sliced result is compared directly against calling
+    # car.size_industry_matched_car with the FULL, unsliced frame.
+    sessions, prices, sic = _sector_fixture()
+    factors = pl.DataFrame(schema=FACTOR_SCHEMA)
+    sample = pl.DataFrame(
+        {
+            "ticker": ["EVENT"], "bioguide_id": ["A1"], "transaction": ["Sale"],
+            "transaction_date": [sessions[40]], "report_date": [sessions[40]],
+        },
+        schema=SAMPLE_SCHEMA,
+    )
+    out = attach.attach_car_bhar(sample, prices, factors, sic)
+    expected = car.size_industry_matched_car("EVENT", sessions[40], 30, prices, sic)
+    assert out["car_size_industry_30"][0] == pytest.approx(expected)
+    assert expected is not None  # sanity: the fixture actually exercises real peer matching, not a None short-circuit
+
+
+def test_attach_car_bhar_sector_slice_extends_for_a_ticker_with_no_sic_classification():
+    # A ticker absent from `sic` entirely still needs its OWN price rows
+    # for the market/four-factor methods -- the sector slicer's "extra"
+    # append path (module docstring) is what supplies them, since such a
+    # ticker is never part of any sector's precomputed peer set.
+    sessions, prices, sic = _sector_fixture()
+    # NOCLASS has price history but is deliberately absent from `sic`.
+    extra_rows = [
+        {"ticker": "NOCLASS", "date": d, "open": 1.0, "high": 1.0, "low": 1.0, "close": 10.0 + i * 0.1, "volume": 1000.0, "close_adj": 10.0 + i * 0.1}
+        for i, d in enumerate(sessions)
+    ]
+    prices = pl.concat([prices, pl.DataFrame(extra_rows, schema=PRICE_SCHEMA)])
+    factors = pl.DataFrame(schema=FACTOR_SCHEMA)
+    sample = pl.DataFrame(
+        {
+            "ticker": ["NOCLASS"], "bioguide_id": ["A1"], "transaction": ["Sale"],
+            "transaction_date": [sessions[40]], "report_date": [sessions[40]],
+        },
+        schema=SAMPLE_SCHEMA,
+    )
+    out = attach.attach_car_bhar(sample, prices, factors, sic)
+    expected = car.market_adjusted_car("NOCLASS", sessions[40], 30, prices)
+    assert expected is not None
+    assert out["car_market_30"][0] == pytest.approx(expected)
+    assert out["industry"][0] == "Other"  # unclassified -> ff12_industry(None)'s own fallback, unaffected by slicing

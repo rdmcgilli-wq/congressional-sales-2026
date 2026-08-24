@@ -91,3 +91,15 @@ def test_four_factor_car_is_zero_when_event_window_matches_the_fitted_model_exac
     event_date = sessions[280]
     got = car.four_factor_car("T", event_date, horizon=3, prices=prices, factors=factors, market_ticker="T")
     assert got == pytest.approx(0.0, abs=1e-6)
+
+
+def test_four_factor_car_and_bhar_with_price_cache_match_uncached_result():
+    sessions, prices, factors = _synthetic(n=300, true_alpha=0.02, true_beta_mkt=1.5)
+    event_date = sessions[280]
+    cache = car.price_lookup_cache(prices)
+    car_cached = car.four_factor_car("T", event_date, horizon=3, prices=prices, factors=factors, market_ticker="T", price_cache=cache)
+    car_uncached = car.four_factor_car("T", event_date, horizon=3, prices=prices, factors=factors, market_ticker="T")
+    assert car_cached == pytest.approx(car_uncached)
+    bhar_cached = car.four_factor_bhar("T", event_date, horizon=3, prices=prices, factors=factors, market_ticker="T", price_cache=cache)
+    bhar_uncached = car.four_factor_bhar("T", event_date, horizon=3, prices=prices, factors=factors, market_ticker="T")
+    assert bhar_cached == pytest.approx(bhar_uncached)
