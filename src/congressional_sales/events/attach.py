@@ -61,6 +61,7 @@ into a plain dict lookup."""
 from __future__ import annotations
 
 from bisect import bisect_right
+from collections import OrderedDict
 from datetime import date
 
 import polars as pl
@@ -119,7 +120,7 @@ def _sector_price_slicer(prices: pl.DataFrame, sic: pl.DataFrame, market_ticker:
     return slice_for
 
 
-def _price_cache_for(slice_for):
+def _price_cache_for(slice_for, max_cached: int = 32):
     """Wraps `slice_for` (above) with a SECOND cache -- ticker -> the
     car.price_lookup_cache(...) dict for that ticker's own slice --
     keyed by the Python object id of whatever DataFrame slice_for
@@ -140,16 +141,37 @@ def _price_cache_for(slice_for):
     sector -- confirmed live to still make a 200-row benchmark run for
     well over an hour. See car.py's price_lookup_cache and
     _control_group_return docstrings for the full accounting.
+
+    Bounded to `max_cached` entries (LRU eviction), not open-ended: a
+    ticker with no SIC classification gets its OWN one-off extension
+    slice from slice_for (its sector's base rows + its own), so a full,
+    real-universe run touching thousands of unclassified tickers would
+    otherwise build and permanently retain thousands of separate
+    price_lookup_cache dicts -- each one redundantly re-storing the
+    SAME market-ticker history it shares with every other one. Confirmed
+    live: an unbounded version of this cache killed the real full-universe
+    run silently (no traceback -- consistent with an OOM kill) right at
+    the first attach_car_bhar call on the full 21,717-row unscreened
+    sample. 32 is comfortably above the ~12 real FF12 sectors, so every
+    sector-level cache -- the ones actually reused across many
+    transactions -- stays warm for the whole run; only the rare,
+    effectively-single-use extension caches get evicted.
     """
-    cache_by_slice_id: dict[int, dict] = {}
+    cache_by_slice_id: OrderedDict[int, dict] = OrderedDict()
 
     def cache_for(ticker: str) -> dict:
         ticker_prices = slice_for(ticker)
         key = id(ticker_prices)
-        if key not in cache_by_slice_id:
-            cache_by_slice_id[key] = car.price_lookup_cache(ticker_prices)
-        return cache_by_slice_id[key]
+        if key in cache_by_slice_id:
+            cache_by_slice_id.move_to_end(key)
+            return cache_by_slice_id[key]
+        value = car.price_lookup_cache(ticker_prices)
+        cache_by_slice_id[key] = value
+        if len(cache_by_slice_id) > max_cached:
+            cache_by_slice_id.popitem(last=False)
+        return value
 
+    cache_for._store = cache_by_slice_id  # test/introspection hook only, mirrors functools.lru_cache's own pattern
     return cache_for
 
 

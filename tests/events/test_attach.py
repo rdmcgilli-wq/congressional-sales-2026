@@ -251,6 +251,56 @@ def test_attach_car_bhar_size_industry_matches_the_unsliced_computation_exactly(
     assert expected is not None  # sanity: the fixture actually exercises real peer matching, not a None short-circuit
 
 
+def test_price_cache_for_bounds_memory_with_lru_eviction_across_many_unclassified_tickers():
+    # THE regression test for the crash that killed the real full-universe
+    # run: no traceback, just a silent death right at the first
+    # attach_car_bhar call -- consistent with an OOM kill. Root cause was
+    # _price_cache_for's cache growing one entry per distinct ticker
+    # slice_for ever returns; a ticker with no SIC classification gets its
+    # OWN one-off "extension" slice (module docstring), so a real universe
+    # with thousands of unclassified tickers built and permanently
+    # retained thousands of separate price_lookup_cache dicts. This test
+    # forces many more distinct off-sector tickers through cache_for than
+    # max_cached allows, and checks (a) the underlying store never grows
+    # past max_cached, and (b) a value evicted and then re-requested is
+    # STILL correct, not stale or wrong, since eviction must trigger a
+    # genuine rebuild rather than silently reusing a discarded entry.
+    sessions = [date(2020, 1, 1) + timedelta(days=i) for i in range(5)]
+    price_rows = [
+        {"ticker": "SPY", "date": d, "open": 1.0, "high": 1.0, "low": 1.0, "close": 300.0, "volume": 1.0, "close_adj": 300.0}
+        for d in sessions
+    ]
+    n_unclassified = 10
+    for i in range(n_unclassified):
+        ticker = f"UNCLASS{i}"
+        price_rows += [
+            {"ticker": ticker, "date": d, "open": 1.0, "high": 1.0, "low": 1.0, "close": float(i + 1), "volume": 1.0, "close_adj": float(i + 1)}
+            for d in sessions
+        ]
+    prices = pl.DataFrame(price_rows, schema=PRICE_SCHEMA)
+    sic = pl.DataFrame(schema=SIC_SCHEMA)  # nobody classified -- every UNCLASSn ticker hits the extension path
+
+    slice_for = attach._sector_price_slicer(prices, sic)
+    max_cached = 3
+    cache_for = attach._price_cache_for(slice_for, max_cached=max_cached)
+
+    for i in range(n_unclassified):
+        cache = cache_for(f"UNCLASS{i}")
+        assert cache[(f"UNCLASS{i}", sessions[0])] == pytest.approx(float(i + 1))
+        assert cache[("SPY", sessions[0])] == pytest.approx(300.0)
+        # The underlying store must never grow past max_cached -- this is
+        # the actual memory-bound guarantee; the crash this test regresses
+        # against came from exactly this store growing one entry per
+        # distinct unclassified ticker, without limit.
+        assert len(cache_for._store) <= max_cached
+
+    # UNCLASS0's cache was evicted long ago (only the last max_cached
+    # tickers' entries survive) -- re-requesting it must rebuild correctly,
+    # not return a stale/wrong/missing value.
+    rebuilt = cache_for("UNCLASS0")
+    assert rebuilt[("UNCLASS0", sessions[0])] == pytest.approx(1.0)
+
+
 def test_attach_car_bhar_sector_slice_extends_for_a_ticker_with_no_sic_classification():
     # A ticker absent from `sic` entirely still needs its OWN price rows
     # for the market/four-factor methods -- the sector slicer's "extra"
