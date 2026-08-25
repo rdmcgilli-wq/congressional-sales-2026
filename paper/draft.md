@@ -1,19 +1,16 @@
 # Do Congressional Sales Carry More Information Than Purchases?
 
-**Status of this draft.** Sections 2–6 and the Limitations section are
-written from the pre-analysis plan (`PRE_ANALYSIS_PLAN.md` v1.0 and
-Addenda A, B, and C) and describe procedures that are implemented,
-tested, and validated end to end against synthetic, narrow-live, and (for
-the delisting-price patch specifically) real delisted-security data — but
-not yet run at full scale. Nothing in this document should be read as a
-finding. Sections 7–9 (Results, Discussion, Conclusion) are placeholders
-and stay that way until the full-universe run itself happens. The
-delisting-inclusive price question that previously blocked that run is
-resolved as of Addendum C (2026-08-21) — see Section 4 below — though a
-faculty contact's help, separately, is aimed at the paper's identification
-strategy and its path to submission, not at data access. Running the
-analysis before the full-universe run would spend the pre-registration on
-output that would have to be discarded once it happens.
+**Status of this draft.** The full pipeline has now been run against the
+real, fully-ingested warehouse (Addenda D and E) and Sections 7–9
+(Results, Discussion, Conclusion) below report its actual output — every
+number is real, computed, and independently reproduced (Addendum E: two
+full independent runs, byte-for-byte identical output). Section 11's
+20-transaction hand-check against primary-source disclosures and the
+professor's own review are still outstanding; treat the specific numbers
+below as verified-reproducible but not yet independently hand-verified.
+The delisting-inclusive price question that previously blocked the
+full-universe run is resolved as of Addendum C (2026-08-21) — see Section
+4 below.
 
 **For the author, before this goes further.** A referee — or a professor
 asked to look at the identification strategy — will ask about some subset
@@ -604,16 +601,290 @@ holdout sample untouched by every result above it.
 
 ## 7. Results
 
-*Pending. Waits on resolution of the delisting-data question and the
-full-universe run. No number in this section exists yet.*
+### 7.1 Sample
+
+The four-screen funnel (Table T1) reduced 100,272 disclosed transactions
+in the 2014–2024 study period to 21,717 directional, common-stock,
+above-threshold, deduplicated transactions with sufficient trailing price
+history and forward-window coverage, then to 13,039 after Screens 1–3
+(rebalancing, tax-loss timing, liquidation) — 12,213 from the House and
+826 from the Senate, 8,098 Democratic and 4,925 Republican members (Table
+T2). The largest single exclusion by far is `common_stock_only`
+(79,088 → 23,489): most disclosed transactions are not common-stock
+trades at all. Filing lag (Table T3) has a median of 28 days and a mean
+of 91, with 19.6% of transactions filed more than 45 days after the
+transaction date — the STOCK Act's nominal disclosure window is
+frequently not met in practice, a fact Section 4's robustness check
+(re-anchoring at the report date) exists specifically to address.
+
+### 7.2 H1 and H2 — the primary test
+
+This paper's single pre-registered primary test — β1 in Model 2, the
+`sale` coefficient at the 90-day horizon, four-factor adjusted, screened
+sample — is **β = −0.0292 (SE = 0.0165, clustered by member), p = 0.077**.
+Applying Section 12's interpretation rule in full: the Benjamini–Hochberg
+corrected threshold across the pre-specified 18-variant grid (3 horizons
+× 3 adjustment methods × 2 samples) is **0.00501**, so this result does
+not survive correction. The random-control permutation test (1,000
+resamples of the same transaction count on random dates) places the
+actual result at the **86.4th percentile** of the simulated null
+distribution — inside it, not outside the 95th-percentile bar Section 12
+sets. By this paper's own pre-declared rule, **the primary test is not
+reported as supportive of H1.**
+
+That is not the end of what the data show, and Section 6.3's own
+discipline requires reporting the rest of the pre-specified grid, not
+just the one cell it designates primary. Every one of the 9 screened-sample
+cells in the 18-variant grid is negative — all three horizons, all three
+adjustment methods — and three clear the Benjamini–Hochberg bar on their
+own: 90-day market-adjusted (β = −0.0407, p = 0.00055), 90-day
+size/industry-matched (β = −0.0347, p = 0.00296), and 180-day
+market-adjusted (β = −0.0373, p = 0.00194); a fourth, 180-day
+size/industry-matched, sits exactly at the corrected threshold
+(p = 0.00501). The unscreened sample shows no comparable pattern — its
+nine cells are a near-even mix of positive and negative, none
+economically large, and only one (90-day market-adjusted, β = −0.0149,
+p = 0.041) clears an uncorrected 5% bar, none survive correction. This is
+the gap the Introduction (Section 1) said would itself be evidence: a raw,
+unscreened comparison of sales to purchases is close to uninformative, and
+a consistent, mostly-significant negative pattern emerges only after
+Screens 1–3 remove rebalancing-, tax-, and liquidation-driven sales. It is
+reported here as a secondary, pre-specified finding — real and not
+post-hoc, since every cell in the grid was fixed in advance — but
+secondary to, and not a substitute for, the one test this paper
+designated primary before seeing any result.
+
+The unconditional means (Table T4, Model 1) add a genuine complication
+worth stating plainly rather than smoothing over. At the 90-day,
+four-factor horizon on the same screened sample, the raw mean CAR is
+−0.69% for sales and −2.88% for purchases — purchases look worse than
+sales in the raw comparison, the opposite of what the fixed-effects
+estimate above reports. This is not a contradiction; it is the standard
+econometric distinction between a between-group raw comparison and a
+within-group estimate. Model 1's unconditional mean mixes together
+whichever members, sectors, and years happen to sell more versus purchase
+more; Model 2's β1 nets out member-level, year-level, and industry-level
+composition and isolates the within-member, within-year, within-industry
+comparison — precisely why this paper pre-registered Model 2, not Model
+1, as primary. Both numbers are correct; they answer different questions,
+and the sign flip between them is itself informative about how much of
+the raw comparison is composition rather than timing.
+
+H2 — that any sale-side effect exceeds the corresponding purchase-side
+effect — is addressed by the same β1 coefficient, since `sale` is coded
+against a purchase baseline: a negative, non-trivial β1 in the screened
+sample (and in three of nine grid cells, a significant one) is consistent
+with H2's predicted asymmetry, but carries exactly the same qualification
+as H1 above — supportive in direction and in the broader grid, not from
+the primary test's own significance bar.
+
+### 7.3 H3 and H4 — the interaction terms
+
+Table T5 reports both interaction terms from the primary specification,
+full and screened samples. **H3 predicted that any sale-side effect
+concentrates among opportunistic sellers and is absent among routine
+ones — `sale_x_opportunistic` should be negative.** It is not: β =
++0.0177 (full, SE = 0.0112) and +0.0745 (screened, SE = 0.0262). In the
+screened sample, adding the interaction to the base `sale` coefficient
+(−0.0292) gives an opportunistic-sale effect of +0.045 — positive, not
+more negative. Read plainly, this reverses H3's predicted ordering: the
+negative pattern in Section 7.2 is, if anything, concentrated among
+routine sellers, not opportunistic ones. **H3 is not supported by the
+sign of this coefficient**, and that is reported as a direct finding, not
+reframed around it. No claim is made here about why; this paper observes
+timing, not mechanism, and the routine/opportunistic classification
+itself (Screen 4, following Cohen, Malloy, and Pomorski 2012) may simply
+be importing a different confound from the corporate-insider setting it
+was adapted from — a question for the Limitations below and for future
+work, not for this section to resolve.
+
+**H4 predicted a stronger negative effect where a member's committee
+assignment plausibly gives them sector-relevant information —
+`sale_x_committee_match` should be negative.** It is: β = −0.0149 (full,
+SE = 0.0159) and −0.0420 (screened, SE = 0.0309) — directionally
+consistent with H4 in both samples, though neither individually clears a
+conventional significance bar at this sample size. This direction
+qualitatively converges with Peez's (2026) central jurisdictional-sell
+finding, obtained independently on the same vendor's data with a
+materially different, unscreened design — two design-independent
+estimates pointing the same way is worth more than either alone,
+even though this paper's own estimate is not independently decisive.
+
+One further point of contact with Peez is a divergence, not a
+convergence, and is reported as such: Peez's jurisdictional sell spread
+is strongest at a 20-trading-day horizon and indistinguishable from zero
+by 255 days, predicting that a comparable effect in this paper's sample
+should be strongest near the 30-day window and largely gone by 180. The
+opposite pattern holds here — every cell that survives Benjamini–Hochberg
+correction in Section 7.2 is at 90 or 180 days; every screened 30-day
+cell is small and statistically unremarkable (four-factor p = 0.667,
+market-adjusted p = 0.199, size/industry p = 0.749). Two candidate
+explanations are visible from the design differences alone and neither is
+adjudicated here: this paper's screening funnel may be removing exactly
+the short-horizon noise (rebalancing, tax-timing) that swamps a
+short-horizon signal in an unscreened design, or the two studies may
+simply be picking up different underlying dynamics. This is stated as an
+open discrepancy, not resolved by this paper's data.
+
+### 7.4 Model 3 and robustness
+
+The calendar-time portfolio (Table T6, Model 3) — a short position in
+every screened-sale name, held approximately three calendar months,
+regressed on the four factors — recovers a monthly alpha of −0.62%
+(SE = 0.66%, t = −0.94, 77 months), not distinguishable from zero. This
+model addresses the cross-sectional dependence the CAR-based models
+handle poorly by design; that it does not itself clear significance is
+consistent with, and does not contradict, Section 7.2's report that the
+single primary CAR-based test also falls short of this paper's
+confirmatory bar.
+
+Of the ten pre-specified robustness checks (Table T7), eight reproduce
+the primary specification's negative sign on `beta_sale`, in a band of
+−0.023 to −0.036 that includes the primary estimate itself — excluding
+the 5 most active traders, the 10 most-traded tickers, the technology
+sector, 2020–2021, restricting to members with three or more terms
+served, winsorizing at the 1st/99th percentiles, re-anchoring at the
+report date, and the House-only split (β = −0.031, n = 11,980, closely
+matching the pooled estimate) all leave the sign and rough magnitude
+intact. Two do not: excluding the 10 most active traders gives
+β = +0.0046 (SE = 0.038, n = 6,465) — small in magnitude and imprecisely
+estimated, effectively indistinguishable from zero rather than a genuine
+reversal — and the Senate-only split gives β = +0.094 (SE = 0.096,
+n = 789) — larger and, on a subsample this small relative to the House's
+11,980, also imprecisely estimated. Splitting by transaction size band
+(the tenth pre-specified check) is noisier still: signs and magnitudes
+vary across bands (from −0.115 to +0.079) on subsamples as small as 93
+observations, with three bands too thin to estimate at all. Taken
+together with the Senate result, this is the same House/Senate asymmetry
+Peez (2026) reports independently for the jurisdictional sell spread,
+though here it plausibly reflects sample size (789 transactions against
+11,980 in the House) rather than a genuine chamber-level difference —
+Section 12's rule that a result concentrated in a small subsample is
+reported as such, not generalized, applies directly to both exceptions.
+
+### 7.5 Holdout (Section 9, item 10 — run once)
+
+The 18-month holdout window (2024-07-01 to 2025-12-31) was re-screened
+from the full transaction history exactly as the main sample was — not
+from a truncated 18-month frame — yielding 4,006 screened holdout
+transactions and 3,985 with a complete regression frame. Re-estimating
+the exact primary specification (Table T8) on this out-of-sample window
+gives **β_sale = −0.0365 (SE = 0.378, p = 0.92)** — the same sign as the
+main-sample estimate, and statistically uninformative on its own. This is
+reported as-is, per this paper's own pre-registered protocol (Section 9,
+item 10: run once, report as-is; a discovered issue is logged as a
+limitation, not patched and re-run).
+
+That limitation is worth stating precisely rather than glossing over. Several
+other coefficients in this same fit are implausibly large for a
+return-scaled outcome and carry standard errors of comparable or larger
+magnitude — `seniority_terms` (β = 3.25, SE = 4,439.6), `log_size`
+(β = 3.63, SE = 3.64), and several `size_band` dummies (β in the −1.5 to
+−4.7 range, SE in the 2.7 to 6.7 range) — a clear signature of weak
+identification, not a coding error: 3,985 observations absorbing 80
+member effects, 2 year effects, and 12 industry effects, plus eight
+size-band dummies and two interaction terms, leaves this specification
+thinly identified on an 18-month window in a way it is not on the
+full 2014–2024 sample. `sale` itself remains on a plausible scale
+(β = −0.037, matching the sign of every other estimate in this paper),
+but its own enormous relative standard error should be read in this
+context: the holdout does not independently confirm the main-sample
+result, but it does not contradict its direction either, and the
+instability is a property of the specification's size relative to an
+18-month window, not of the main-sample findings above.
 
 ## 8. Discussion
 
-*Pending — depends on Section 7.*
+By this paper's own pre-declared decision rule (Section 12), the single
+pre-registered primary test does not qualify as supportive: β1 in Model
+2, at the 90-day horizon, four-factor adjusted, on the screened sample,
+survives neither Benjamini–Hochberg correction across the 18-variant grid
+nor the random-control permutation's 95th-percentile bar. Read on its own,
+this is a null result on H1's most direct, most stringent test.
+
+Read alongside the rest of the pre-specified analysis, the picture is
+more textured than a single null test conveys, and it is reported in
+full because every piece of it was specified before any result existed.
+Three things hold together. First, the screening step — this paper's
+actual methodological contribution, not a footnote to it — visibly
+matters: the unscreened sample shows no consistent sign or pattern across
+the 18-variant grid, while the screened sample is negative in all nine
+cells and clears Benjamini–Hochberg correction in three (a fourth sits
+exactly at the threshold). Second, the direction is consistent across
+every horizon, every adjustment method, eight of ten robustness checks,
+and the out-of-sample holdout — no single piece of this evidence is
+individually decisive, but nothing in it points the other way, and the H4
+interaction (stronger effect where a member's committee plausibly gives
+them sector access) converges with Peez's (2026) independent,
+differently-designed finding on the same underlying question. Third, and
+against that pattern, two results run counter to it rather than merely
+falling short of it: H3's interaction reverses its predicted sign
+outright, and Model 3's calendar-time alpha, though not itself
+distinguishable from zero (t = −0.94), is negative rather than positive —
+the sign a short position in sale-names would show if H1 held. Both are
+reported directly, not reinterpreted to fit the pattern in the rest of
+the evidence.
+
+Taken together, this is neither a confirmation of informed selling in
+Congress nor a clean null. It is a case where the single most stringent,
+pre-registered test — deliberately chosen to be hard to pass, precisely
+so that passing it would mean something — is not passed, while a broader
+body of pre-specified, non-post-hoc evidence points in one consistent
+direction with two genuine exceptions (H3's reversed sign, and the
+horizon profile running opposite to Peez's). Section 12's rules exist to
+prevent exactly the failure mode of calling this pattern "significant"
+because most of it looks the same way; applied honestly, the correct
+summary is that this paper finds suggestive, not confirmatory, evidence
+for H1, H2, and H4, and a clear non-confirmation of H3, on the sample and
+specification pre-registered on 2026-08-08.
+
+This paper does not observe why any of this holds, and does not claim to.
+It observes when abnormal returns follow a disclosed sale, under a
+screening design meant to isolate the transactions least explainable by
+anything other than information — and reports, without embellishment,
+that the pre-registered primary test on that design falls short of this
+paper's own bar for calling the result supportive.
 
 ## 9. Conclusion
 
-*Pending — depends on Sections 7–8.*
+This paper set out to test whether congressional sales — the
+under-studied, harder-to-see half of congressional trading — carry
+information beyond what purchases carry, using a four-screen funnel
+built to remove the rebalancing, tax-timing, and liquidation-driven sales
+that make a raw sale/purchase comparison close to uninformative. The
+single pre-registered primary test does not survive this paper's own
+correction and random-control criteria: β1 = −0.029 (p = 0.077, screened
+sample, 90-day horizon, four-factor adjusted) is a null result by the
+standard fixed before any data were seen.
+
+It is not the only result this paper reports, because every other number
+above was pre-specified too. The screened sample is directionally
+negative across every horizon and method tested, three of nine grid cells
+independently clear a stringent multiple-testing correction, the pattern
+is absent in the unscreened sample, eight of ten robustness checks
+reproduce it, and the committee-jurisdiction interaction (H4) points the
+same direction as Peez's (2026) independent estimate. Against that, two
+results run counter to the pattern rather than merely falling short of
+it: the opportunistic-trader interaction (H3) reverses its predicted
+sign outright, and the calendar-time portfolio's alpha (Model 3), while
+not itself distinguishable from zero, is signed opposite to what H1
+predicts. The horizon profile of this paper's strongest results
+(90–180 days) also runs opposite to Peez's (20 days). The 18-month
+holdout reproduces the main estimate's sign but is too thinly identified
+on its own to add independent confirmatory weight.
+
+The honest summary is suggestive, not confirmatory, evidence that
+screened congressional sales anticipate subsequent underperformance,
+concentrated where a member's committee plausibly gives them relevant
+information, and not concentrated among members who trade off their own
+predictable schedule — with the last of those three claims directly
+contradicted by this paper's own H3 estimate. Whether any of this
+reflects information at all, as opposed to some other regularity this
+paper's four screens did not anticipate, is not a question this paper's
+design can answer, and it does not attempt to. No causal claim about
+information sources is made. No claim about any individual member is
+made. No claim about the legality of any transaction is made. No
+investment recommendation is made.
 
 ---
 
@@ -666,6 +937,23 @@ full-universe run. No number in this section exists yet.*
 - **Buy-and-hold abnormal return (BHAR)** is computed at every horizon and
   by every method as specified, but is not separately tabulated beyond
   its role as a cross-check on CAR.
+- **The 18-month holdout (Section 7.5) is thinly identified.** The primary
+  specification's member, year, and industry fixed effects, eight
+  size-band dummies, and two interaction terms leave 3,985 holdout
+  observations able to identify the `sale` coefficient itself, but several
+  other coefficients in the same fit carry standard errors of comparable
+  or larger magnitude than their point estimates — a small-sample property
+  of applying this specification's full parameter count to an 18-month
+  window, not a defect specific to the holdout period chosen. Per this
+  paper's own pre-registered protocol, the result is reported as-is
+  rather than patched or re-run.
+- **The Section 12 interpretation rules were applied to the single
+  primary test only.** The random-control permutation check was run once,
+  against the primary specification; the three other grid cells reported
+  in Section 7.2 as clearing Benjamini–Hochberg correction on their own
+  have not been independently checked against a random-control null, and
+  are reported as secondary evidence for that reason, not as tests that
+  have cleared both of Section 12's criteria.
 
 ## What This Paper Does Not Claim
 
