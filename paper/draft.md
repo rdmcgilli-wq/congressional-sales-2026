@@ -5,12 +5,14 @@ real, fully-ingested warehouse (Addenda D and E) and Sections 7–9
 (Results, Discussion, Conclusion) below report its actual output — every
 number is real, computed, and independently reproduced (Addendum E: two
 full independent runs, byte-for-byte identical output). Section 11's
-20-transaction hand-check against primary-source disclosures and the
-professor's own review are still outstanding; treat the specific numbers
-below as verified-reproducible but not yet independently hand-verified.
-The delisting-inclusive price question that previously blocked the
-full-universe run is resolved as of Addendum C (2026-08-21) — see Section
-4 below.
+20-transaction hand-check is also complete (Addendum F): more than half
+verified directly against the primary House Clerk filing (ticker,
+transaction type, transaction date, and disclosed amount all confirmed),
+the remainder cross-checked against the data vendor's own records, zero
+discrepancies found either way. The professor's own review is the one
+step still outstanding. The delisting-inclusive price question that
+previously blocked the full-universe run is resolved as of Addendum C
+(2026-08-21) — see Section 4 below.
 
 **For the author, before this goes further.** A referee — or a professor
 asked to look at the identification strategy — will ask about some subset
@@ -924,10 +926,19 @@ investment recommendation is made.
   with overlapping monthly holding-period composition this can understate
   the true standard error, though the point estimate itself is unaffected.
 - **All trade-level data is sourced from Quiver Quantitative**, not pulled
-  directly from the House Clerk or Senate disclosure systems; a small,
-  non-bulk manual cross-check against the primary portals is part of this
-  paper's verification protocol, not a substitute for full independent
-  sourcing.
+  directly from the House Clerk or Senate disclosure systems. Section 11's
+  20-transaction manual cross-check (Addendum F) is a small, non-bulk
+  sample, not a substitute for full independent sourcing: more than half
+  of the 20 were confirmed directly against the primary House Clerk PTR
+  filing (ticker, transaction type, transaction date, and disclosed
+  amount all matching), and the rest against the vendor's own site
+  rather than the primary filing — a weaker check, since it can confirm
+  this paper's ingestion is faithful to Quiver but not that Quiver itself
+  is faithful to the underlying disclosure. Zero discrepancies were found
+  under either method, and the exact filing (Clerk) date shown in this
+  paper's data is not printed on the PTR form itself (which shows only
+  the transaction date and a separate broker-notification date), so that
+  one field could not be directly cross-checked.
 - **Every match in this study keys on the ticker symbol**, not a
   permanent security identifier; a ticker-reuse audit detects, but does
   not correct for, a CIK mapping to more than one historical symbol.

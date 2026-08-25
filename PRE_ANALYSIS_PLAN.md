@@ -660,3 +660,54 @@ noted here as a raw fact about this run's output, not as a claim about
 H1, and is not to be treated as this study's reported result until
 Section 11's hand-check has been performed. No causal, individual-member,
 or legality claim is made.
+
+## Addendum F (2026-08-25): Section 11 hand-check completed
+
+**Committed:** 2026-08-25
+**Author:** Ryan McGillicuddy
+**Status:** The 20-transaction manual verification Section 11 pre-registered
+is complete. This addendum records what was actually checked and how, since
+the method used partway through was materially stronger than the first pass.
+
+**What happened.** The 20 transactions were drawn from
+`outputs/hand_check_worksheet.csv` (a seeded sample from the real,
+full-scale screened output — Addendum E). The first full pass checked all
+20 against Quiver Quantitative's own site — the same vendor this study's
+entire trade-level dataset comes from. That pass found zero discrepancies,
+but it is a same-vendor check: it confirms this project's own ingestion
+code faithfully reproduces Quiver's data, not that Quiver's data itself
+faithfully reproduces the real disclosure. A second pass then attempted
+genuine primary-source verification directly against the House Clerk's
+own Financial Disclosure Reports database
+(`disclosures-clerk.house.gov`), which required navigating past its
+Annual Financial Disclosure Reports (broad year-end holdings, not
+individual dated trades) to its Periodic Transaction Report (PTR)
+filings — the STOCK Act's actual per-transaction disclosure. More than
+half of the 20 transactions were confirmed this way: ticker, transaction
+type (Purchase/Sale), transaction date, and disclosed dollar range all
+matched exactly against the real PTR PDF. One transaction (McKinley/MA,
+row #16) was specifically confirmed to the exact transaction date and
+dollar amount, including its "New" filing status and IRA-spousal
+subholding detail, resolving what first looked like a possible mismatch
+(a separate, later MA transaction under the same member had briefly
+been mistaken for this one). The remaining transactions in this second
+pass were not reached and remain checked only against Quiver's own site,
+from the first pass.
+
+**A field that cannot be cross-checked, and why.** This study's
+`report_date` field records when the Clerk's office posted a filing.
+Real PTR forms do not print that value directly — they print the
+transaction date and a separate broker-notification date, with the
+Clerk's own filing/posting date recorded only in the portal's own
+metadata around the filing, not on the form itself. `report_date` was
+therefore not independently verifiable against the PTR PDF text in
+either pass; ticker, transaction type, transaction date, and disclosed
+amount were.
+
+**Result: zero discrepancies found across all 20 transactions**, under
+either method. This is a real, meaningful, if partial, execution of
+Section 11's hand-check: more than half of the pre-registered sample now
+has genuine independent primary-source confirmation, not merely
+same-vendor confirmation, and nothing in either pass contradicts the
+sample's basic integrity (correct ticker, correct direction, correct
+date, correct disclosed amount).
