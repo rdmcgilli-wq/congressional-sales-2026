@@ -568,3 +568,95 @@ data completeness only. The 75-ticker zero-data list and any residual
 that a future, more careful pass finds still genuinely incomplete belong
 in the paper's Limitations section by name when the real analysis runs,
 exactly as Addendum C already commits to.
+
+## Addendum E (2026-08-25): First real full-pipeline run, three bugs found and fixed at scale, reproducibility confirmed
+
+**Committed:** 2026-08-25
+**Author:** Ryan McGillicuddy
+**Status:** `scripts/run_full_pipeline.py` has now been run to completion
+against the real, fully-ingested warehouse (Addendum D) — the actual
+sample funnel, all four screens, the CAR/BHAR event-study engine, Models
+1-3, the robustness suite, the 18-variant Benjamini-Hochberg grid, the
+random-control permutation test, and all 8 figures. This is real,
+computed output, not a mechanical or partial check. It is NOT yet the
+study's final, reportable result: Section 11's 20-transaction hand-check
+against primary-source disclosures has not been performed (a manual step,
+outside the scope of an addendum like this one), and per Section 11's own
+protocol these numbers should be treated as computed-but-not-yet-
+independently-verified until that check is done.
+
+**Three real bugs surfaced and were fixed only by running the real
+pipeline at true full scale** — none were caught by the existing test
+suite (200+ tests at the time, all passing) or by the synthetic
+end-to-end integration test, since neither exercised real full-scale data
+volume or the specific real-data edge cases involved:
+
+1. **A severe, previously-unidentified performance bottleneck** in
+   `events.attach.attach_car_bhar`'s size/industry-matched CAR/BHAR path.
+   `matched_control_tickers` was being recomputed independently 6 times
+   per transaction (once per horizon x CAR/BHAR) despite not depending on
+   horizon at all, and — far larger — `_control_group_return` was calling
+   an uncached price lookup once per control ticker per day in the event
+   window (up to 180 days x ~487 same-sector peers x 2 lookups for a
+   single 180-day CAR in this study's "Money" sector). A live 200-row
+   benchmark against the real warehouse measured 35.044s/row before the
+   fix (~8.8 days extrapolated to the full 21,717-row sample) and
+   0.216s/row after (~162x) — see commit `de775d4`. Every optimization
+   (`car.size_proxies_asof`, `car.price_lookup_cache`, the `controls`/
+   `size_cache`/`price_cache` reuse parameters) is covered by an
+   equivalence test proving identical output to the original unsliced,
+   uncached computation.
+2. **A silent out-of-memory kill** on the first attempt to run the fixed
+   pipeline at full scale (no traceback — confirmed by process exit code
+   and absence of any error output). Root cause: the new per-sector price
+   cache introduced by fix #1 had no eviction policy, and a ticker with
+   no FF12/SIC classification gets its own one-off "extension" price
+   slice — with thousands of unclassified tickers in the full 21,717-row
+   unscreened universe, thousands of separate, permanently-retained price
+   caches were built, each redundantly re-storing the market ticker's
+   entire multi-year history. Fixed with an LRU-bounded cache (32 entries
+   — comfortably above the ~12 real FF12 sectors) — see commit `7ce6a9d`.
+3. **A genuine `AbsorbingEffectError` crash in Model 2**, on the first
+   successful (post-performance-fix) full run. The real `congress_trades`
+   table carries 467 distinct `amount_range` values, but only 10 are the
+   canonical STOCK Act disclosure bands (99.5% of rows); the remaining
+   ~484 rows carry malformed/non-standard values from Quiver's own bulk
+   feed (a specific dollar figure instead of a range, a lower-bound-only
+   figure, a stray metadata string), almost all appearing only once or
+   twice in the whole table. `size_band` copied `amount_range` verbatim
+   as a dummy control, and a near-singleton dummy category becomes
+   perfectly collinear with its own row's residual once Member/Year/
+   IndustryFE are absorbed. Fixed via `model2.canonical_size_band`,
+   bucketing every non-canonical value into a single "Other" category —
+   changes nothing about the sample itself (funnel/screens untouched),
+   only how ~0.5% of transactions are coded for this one Model 2 control
+   — see commit `473ed4a`.
+
+**Reproducibility (Section 11) confirmed for the first time.** The full
+pipeline was run twice, independently, end to end, against the identical
+real warehouse. `diff -rq` across every one of the 15 output files —
+all 8 figures (PNG), `paper.md`, and all 6 CSVs (`bh_correction_grid`,
+`nan_audit`, `delisting_audit`, `ticker_reuse_audit`, `hand_check_worksheet`,
+plus T1-T7 embedded in `paper.md`) — reported zero differences; `paper.md`'s
+MD5 hash was identical byte-for-byte across both runs. The two runs took
+markedly different wall-clock time (~4 hours vs. ~11 hours); a live
+memory-pressure check during the second run (`vm_stat`) found the host
+machine's overall free memory below 1% at the time, most plausibly
+explaining the difference as environmental (other applications competing
+for a small amount of physical RAM) rather than a code-level
+non-determinism, consistent with the fully byte-identical output.
+
+**The raw primary-specification result, reported honestly and without
+interpretation pending hand-check verification:** the study's single
+pre-registered primary test (`sale` coefficient, 90-day horizon,
+four-factor adjusted, screened sample) came out beta = -0.0292, p =
+0.0769 — this does NOT survive the run's Benjamini-Hochberg corrected
+threshold of 0.005007, so by Section 12's own rule this specific test is
+not "supportive." Three other cells in the pre-registered 18-variant grid
+(90-day market-adjusted screened, 90-day size/industry-matched screened,
+180-day market-adjusted screened) do clear that threshold, and every
+cell in the screened sample carries a negative sign — this pattern is
+noted here as a raw fact about this run's output, not as a claim about
+H1, and is not to be treated as this study's reported result until
+Section 11's hand-check has been performed. No causal, individual-member,
+or legality claim is made.
