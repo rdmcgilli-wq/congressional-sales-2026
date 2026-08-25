@@ -21,3 +21,9 @@ data/
 # during the whole-branch review: `git add` on those directories' already-
 # tracked files warned "ignored by one of your .gitignore files").
 /outputs/
+
+# Rendered paper formats (regenerate via `pandoc paper/draft.md -o
+# paper/draft.docx` / `--pdf-engine=typst -o paper/draft.pdf`; draft.md
+# is the single source of truth, not committed as binaries)
+paper/draft.docx
+paper/draft.pdf

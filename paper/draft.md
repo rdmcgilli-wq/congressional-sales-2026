@@ -1,63 +1,47 @@
 # Do Congressional Sales Carry More Information Than Purchases?
 
-**Status of this draft.** The full pipeline has now been run against the
-real, fully-ingested warehouse (Addenda D and E) and Sections 7–9
-(Results, Discussion, Conclusion) below report its actual output — every
-number is real, computed, and independently reproduced (Addendum E: two
-full independent runs, byte-for-byte identical output). Section 11's
-20-transaction hand-check is also complete (Addendum F): more than half
-verified directly against the primary House Clerk filing (ticker,
-transaction type, transaction date, and disclosed amount all confirmed),
-the remainder cross-checked against the data vendor's own records, zero
-discrepancies found either way. The professor's own review is the one
-step still outstanding. The delisting-inclusive price question that
-previously blocked the full-universe run is resolved as of Addendum C
-(2026-08-21) — see Section 4 below.
+**Ryan McGillicuddy**
 
-**For the author, before this goes further.** A referee — or a professor
-asked to look at the identification strategy — will ask about some subset
-of these. Each is a defensible, documented choice, not an error, but
-"defensible" only helps if you can explain the reasoning yourself, not
-just point at the code comment that made the call.
+2026-08-25
 
-- The $1,000 statutory threshold is applied as a strict *greater-than*.
-  A transaction disclosed at exactly $1,000 is excluded. (Section 5.)
-- Screen 1's "unrelated sectors" condition is implemented as
-  *distinct tickers*, not distinct sectors — a weaker proxy than the plan's
-  literal wording, because the screen is built as a pure function that
-  does not depend on the industry classification join. (Section 5.)
-- Screen 3's cumulative-exposure sub-condition is now reported two ways —
-  with and without — because it is built entirely from this study's own
-  disclosed transaction data and has no visibility into a member's true,
-  pre-existing portfolio (Addendum B). Know why both numbers are in the
-  paper, not just one.
-- The delisting-data patch (Addendum C) prefers each security's "Q"
-  bankruptcy-suffix symbol over its plain ticker, and only falls back to
-  the plain ticker's own data if it resumes within 30 days of the last
-  known date. Know why "just re-query the plain ticker" was rejected: it
-  is a real, confirmed failure mode (Bed Bath & Beyond's own reused
-  ticker), not a hypothetical one, and a referee who knows the case may
-  ask about it directly.
-- The committee-to-industry mapping behind H4 is a hand-built, thirteen-
-  entry keyword table — an explicit research judgment about which
-  committees plausibly have jurisdiction over which Fama-French sectors,
-  not a fact pulled from an official source. It is the single most
-  subjective piece of machinery in the paper and it feeds the
-  falsification test directly.
-- CAR is anchored on the transaction date for the primary specification
-  and Models 1–2, but on the report date for Model 3's calendar-time
-  portfolio. This looks inconsistent on a first read. It isn't: the two
-  models are asking different questions (foreknowledge vs. actionability),
-  and Model 3 cannot short a stock before its sale is public. Be ready to
-  say that in one sentence, not five.
-- Chamber and party are listed as Model 2 controls in the pre-analysis
-  plan but never appear as estimated coefficients. This is forced by
-  member fixed effects, not a deviation — a time-invariant covariate is
-  perfectly collinear with a fixed effect on it — but "it's forced by the
-  math" is a sentence you should be able to say cold.
-- Two Section 7 controls are substituted or dropped: log market
-  capitalization becomes log trailing dollar volume (no shares-outstanding
-  source), and book-to-market is omitted entirely (no source at all).
+---
+
+### Abstract
+
+This paper tests whether congressional stock sales — the less-studied
+half of congressional trading — carry information beyond what purchases
+carry, using a four-screen sample-construction procedure that removes
+sales attributable to portfolio rebalancing, tax-loss harvesting, and
+retirement-driven liquidation before testing for an information effect.
+Using disclosure data on 100,272 transactions by members of the U.S.
+House and Senate from 2014 to 2024, screened to 13,039 surviving all
+exclusion criteria, this paper's single pre-registered primary test —
+cumulative abnormal return following a screened sale at a 90-day
+horizon, four-factor adjusted — is negative but does not survive
+Benjamini-Hochberg correction across the paper's 18 pre-specified test
+variants (β = −0.029, p = 0.077, corrected threshold p = 0.005). A
+broader body of pre-specified evidence points in one direction: the
+screened sample is negative across every horizon and adjustment method
+tested, three of nine grid cells independently clear the correction
+threshold, and the pattern is entirely absent in the unscreened sample —
+evidence that the screening procedure itself, this paper's central
+methodological contribution, reveals a signal a raw sale/purchase
+comparison does not. A hypothesized interaction with committee
+jurisdiction is directionally consistent with an information-based
+account and converges with independent evidence from a concurrently
+written paper using a different design; a hypothesized interaction with
+trading routine is not, running opposite to its predicted sign. An
+18-month out-of-sample holdout reproduces the main estimate's direction
+but is too thinly identified to add independent statistical weight.
+Taken as a whole, this paper reports suggestive, not confirmatory,
+evidence that screened congressional sales anticipate subsequent
+underperformance, under the same pre-registered decision rule that would
+have called the result supportive had it cleared a higher bar.
+
+**Keywords:** congressional trading, informed trading, insider trading,
+information asymmetry, event study, STOCK Act, disclosure
+
+**JEL classification:** G14, G18, D82
 
 ---
 
