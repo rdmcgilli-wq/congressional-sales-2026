@@ -634,6 +634,61 @@ date. The STOCK Act's official disclosure window is often missed in
 practice, which is exactly why Section 4's robustness check
 (re-anchoring on the report date) exists.
 
+**Table T1. Sample construction funnel**
+
+| Step | Count before | Count after | Excluded |
+|:---|---:|---:|---:|
+| Sample period (2014-2024) | 100,272 | 79,088 | 21,184 |
+| Common stock only | 79,088 | 23,489 | 55,599 |
+| Directional transaction only | 23,489 | 23,346 | 143 |
+| Above statutory threshold | 23,346 | 22,945 | 401 |
+| Deduplicate filings | 22,945 | 22,945 | 0 |
+| Minimum prior trading history | 22,945 | 22,177 | 768 |
+| Full forward window | 22,177 | 21,717 | 460 |
+
+![Sample construction funnel, count remaining after each step.](figures/f1_sample_funnel.png)
+
+**Table T2. Sample composition (screened, 13,039 transactions)**
+
+| Dimension | Value | Count |
+|:---|:---|---:|
+| Chamber | Representatives | 12,213 |
+| Chamber | Senate | 826 |
+| Party | Democratic | 8,098 |
+| Party | Republican | 4,925 |
+| Party | Independent | 4 |
+| Party | Libertarian | 12 |
+| Industry | Other | 4,010 |
+| Industry | Business Equipment | 2,075 |
+| Industry | Money | 1,618 |
+| Industry | Healthcare | 1,071 |
+| Industry | Shops | 1,021 |
+| Industry | Manufacturing | 751 |
+| Industry | Consumer NonDurables | 490 |
+| Industry | Utilities | 703 |
+| Industry | Chemicals | 418 |
+| Industry | Telephone and Television Transmission | 284 |
+| Industry | Energy | 348 |
+| Industry | Consumer Durables | 250 |
+| Year | 2018 | 1,470 |
+| Year | 2019 | 2,235 |
+| Year | 2020 | 3,239 |
+| Year | 2021 | 2,622 |
+| Year | 2022 | 1,574 |
+| Year | 2023 | 1,487 |
+| Year | 2024 | 412 |
+
+*Size-band and pre-2018 year rows omitted from this table for length; the
+full breakdown is available on request.*
+
+**Table T3. Filing lag (days between transaction and disclosure)**
+
+| Median | Mean | 90th percentile | Max | Share filed beyond 45 days |
+|---:|---:|---:|---:|---:|
+| 28 | 91.3 | 254 | 2,369 | 19.6% |
+
+![Distribution of filing lag in days, with the STOCK Act's 45-day requirement marked.](figures/f2_filing_lag.png)
+
 ### 7.2 H1 and H2, the primary test
 
 This paper's single pre-registered primary test, β1 in Model 2, the
@@ -648,6 +703,8 @@ result at the **86.4th percentile** of the simulated distribution,
 inside the normal range, not outside the 95th-percentile bar Section
 12 requires. By this paper's own rule, set before seeing any result,
 **the primary test does not count as support for H1.**
+
+![Random-date permutation test: the actual result against 1,000 simulated draws.](figures/f6_random_control.png)
 
 That is not the whole story, and Section 6.3's own rules require
 reporting the rest of the planned results, not just the one test
@@ -691,6 +748,31 @@ directions is itself informative about how much of the raw comparison
 is really just about which members and industries traded more, rather
 than about timing.
 
+**Table T4. Unconditional mean CAR, screened sample (Model 1)**
+
+| Transaction | Horizon | Method | Mean CAR | SE (member) | SE (month) | N |
+|:---|---:|:---|---:|---:|---:|---:|
+| Sale | 30 | Market-adjusted | 0.16% | 0.41% | 0.35% | 2,570 |
+| Purchase | 30 | Market-adjusted | −0.35% | 0.19% | 0.30% | 10,450 |
+| Sale | 30 | Four-factor | −0.41% | 0.41% | 0.31% | 2,564 |
+| Purchase | 30 | Four-factor | −1.20% | 0.26% | 0.28% | 10,409 |
+| Sale | 30 | Size/industry-matched | −1.00% | 1.20% | 1.20% | 2,090 |
+| Purchase | 30 | Size/industry-matched | −0.68% | 0.30% | 0.39% | 8,468 |
+| Sale | 90 | Market-adjusted | 1.11% | 1.58% | 1.51% | 2,568 |
+| Purchase | 90 | Market-adjusted | 0.13% | 0.50% | 0.51% | 10,448 |
+| Sale | 90 | Four-factor | −0.69% | 1.72% | 1.54% | 2,562 |
+| Purchase | 90 | Four-factor | −2.88% | 0.86% | 0.83% | 10,407 |
+| Sale | 90 | Size/industry-matched | −1.67% | 1.44% | 1.18% | 2,090 |
+| Purchase | 90 | Size/industry-matched | −0.82% | 0.55% | 0.63% | 8,467 |
+| Sale | 180 | Market-adjusted | 1.93% | 1.73% | 1.70% | 2,566 |
+| Purchase | 180 | Market-adjusted | 0.95% | 1.48% | 0.91% | 10,442 |
+| Sale | 180 | Four-factor | −2.21% | 2.07% | 1.79% | 2,560 |
+| Purchase | 180 | Four-factor | −4.85% | 1.79% | 1.51% | 10,401 |
+| Sale | 180 | Size/industry-matched | −4.75% | 1.58% | 2.10% | 2,090 |
+| Purchase | 180 | Size/industry-matched | −1.72% | 0.84% | 0.85% | 8,463 |
+
+![Mean event-time cumulative abnormal return, sales vs. purchases.](figures/f3_event_time_car.png)
+
 H2, the claim that any sale-side effect is bigger than the matching
 purchase-side effect, is addressed by this same β1 number, since
 `sale` is coded relative to a purchase baseline. A negative,
@@ -702,7 +784,33 @@ own statistical bar.
 
 ### 7.3 H3 and H4, the interaction terms
 
-Table T5 reports both interaction terms from the main model, for both
+**Table T5. Model 2 coefficients, full and screened samples**
+
+| Parameter | β (full) | SE (full) | β (screened) | SE (screened) |
+|:---|---:|---:|---:|---:|
+| sale | −0.0001 | 0.0077 | −0.0292 | 0.0165 |
+| sale × opportunistic | 0.0177 | 0.0112 | 0.0745 | 0.0262 |
+| sale × committee_match | −0.0149 | 0.0159 | −0.0420 | 0.0309 |
+| opportunistic | 0.0006 | 0.0165 | −0.0047 | 0.0234 |
+| committee_match | 0.0187 | 0.0195 | 0.0196 | 0.0199 |
+| log_size | 0.0063 | 0.0027 | 0.0098 | 0.0044 |
+| prior_12mo_return | −0.1141 | 0.0310 | −0.1365 | 0.0503 |
+| seniority_terms | −0.0221 | 0.0279 | 0.0297 | 0.0316 |
+| size_band: $1,001-$15,000 | −0.0620 | 0.0302 | −0.1017 | 0.0459 |
+| size_band: $15,001-$50,000 | −0.0768 | 0.0296 | −0.1150 | 0.0440 |
+| size_band: $50,001-$100,000 | −0.0654 | 0.0279 | −0.1013 | 0.0360 |
+| size_band: $100,001-$250,000 | −0.0022 | 0.0337 | 0.0134 | 0.0599 |
+| size_band: $250,001-$500,000 | 0.0108 | 0.0257 | −0.0220 | 0.0298 |
+| size_band: $500,001-$1,000,000 | 0.0557 | 0.0295 | 0.0506 | 0.0270 |
+| size_band: $5,000,001-$25,000,000 | −0.0462 | 0.0223 | −0.0842 | 0.0317 |
+| size_band: Other | −0.0112 | 0.1143 | 0.0258 | 0.2103 |
+
+*Member, year, and industry fixed effects absorbed, not separately
+reported. Standard errors clustered by member. "size_band: Other"
+groups malformed or non-standard disclosed-amount values, none of the
+ten canonical STOCK Act bands, roughly 0.5% of transactions.*
+
+Table 5 reports both interaction terms from the main model, for both
 the full and filtered samples. **H3 predicted that any sale-side
 effect would be concentrated among opportunistic sellers and missing
 among routine ones, meaning `sale_x_opportunistic` should be
@@ -722,6 +830,8 @@ does among corporate insiders, the setting it was originally built
 for. That question is left for the Limitations section and for future
 work, not resolved here.
 
+![Mean event-time CAR, opportunistic vs. routine sellers.](figures/f4_event_time_car_by_routine.png)
+
 **H4 predicted a stronger negative effect where a member's committee
 plausibly gives them access to relevant information, meaning
 `sale_x_committee_match` should be negative.** It is: β = −0.0149
@@ -733,6 +843,8 @@ independently, using the same data vendor but a very different,
 unfiltered design. Two independent studies pointing the same way is
 worth more than either one alone, even though this paper's own
 estimate is not decisive by itself.
+
+![Mean event-time CAR, sales in committee-matched vs. non-matched industries.](figures/f5_event_time_car_by_committee_match.png)
 
 There is also a real point of disagreement with Peez, and it is
 reported honestly rather than smoothed over: Peez's jurisdictional
@@ -763,7 +875,36 @@ own fits with, and does not contradict, Section 7.2's finding that the
 main CAR-based test also falls short of this paper's bar for a
 confirmed result.
 
-Of the ten robustness checks planned in advance (Table T7), eight
+**Table T6. Calendar-time portfolio alpha (Model 3)**
+
+| Alpha (monthly) | SE | t-statistic | Months |
+|---:|---:|---:|---:|
+| −0.62% | 0.66% | −0.94 | 77 |
+
+![Cumulative calendar-time alpha, month by month.](figures/f8_calendar_time_alpha.png)
+
+**Table T7. Robustness checks against the primary specification**
+
+| Check | β (sale) | SE | N |
+|:---|---:|---:|---:|
+| Full screened sample | −0.0292 | 0.0165 | 12,769 |
+| Exclude top 5 traders | −0.0235 | 0.0250 | 8,786 |
+| Exclude top 10 traders | 0.0046 | 0.0376 | 6,465 |
+| Exclude 2020-2021 | −0.0274 | 0.0173 | 7,056 |
+| Exclude top 10 tickers | −0.0347 | 0.0170 | 11,724 |
+| Exclude technology sector | −0.0232 | 0.0213 | 10,758 |
+| Report-date entry (vs. transaction date) | −0.0266 | 0.0180 | 12,826 |
+| Winsorized at 1st/99th percentile | −0.0342 | 0.0151 | 12,769 |
+| Three or more terms served | −0.0357 | 0.0156 | 9,885 |
+| House only | −0.0313 | 0.0156 | 11,980 |
+| Senate only | 0.0944 | 0.0960 | 789 |
+
+*Size-band split (the tenth check) omitted from this table; see Section
+7.4 for its range and the three bands too thin to estimate.*
+
+![Beta (sale) estimated separately by calendar year.](figures/f7_year_by_year_effect.png)
+
+Of the ten robustness checks planned in advance (Table 7), eight
 reproduce the main test's negative sign, in a range from −0.023 to
 −0.036 that includes the primary estimate itself: excluding the 5 most
 active traders, excluding the 10 most-traded stocks, excluding the
@@ -820,6 +961,24 @@ should be read in that context. The holdout does not independently
 confirm the main result, but it does not contradict its direction
 either, and the instability is a property of asking too much of an
 18-month sample, not a problem with the main findings above.
+
+**Table T8. Holdout regression, 18-month out-of-sample period**
+
+| Parameter | β | SE | N | Members | Years | Industries |
+|:---|---:|---:|---:|---:|---:|---:|
+| sale | −0.0365 | 0.378 | 3,985 | 80 | 2 | 12 |
+| sale × opportunistic | 0.896 | 1.016 | 3,985 | 80 | 2 | 12 |
+| sale × committee_match | −1.022 | 1.313 | 3,985 | 80 | 2 | 12 |
+| opportunistic | −1.609 | 1.906 | 3,985 | 80 | 2 | 12 |
+| committee_match | 0.442 | 0.904 | 3,985 | 80 | 2 | 12 |
+| log_size | 3.629 | 3.643 | 3,985 | 80 | 2 | 12 |
+| prior_12mo_return | −2.128 | 2.062 | 3,985 | 80 | 2 | 12 |
+| seniority_terms | 3.247 | 4,439.6 | 3,985 | 80 | 2 | 12 |
+
+*Size-band rows omitted from this table; all carry the same weak-identification
+pattern described above (β roughly −1.5 to −4.7, SE roughly 2.7 to 6.7).
+Member, year, and industry counts are fixed-effect group counts, not
+additional regressors.*
 
 ## 8. Discussion
 
